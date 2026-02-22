@@ -1,0 +1,282 @@
+// Prisma 7 — FacturaPE Schema
+// Driver adapter: @prisma/adapter-pg (obligatorio en v7)
+// Output: ./src/generated/prisma (no node_modules)
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ═══════════════════════════════════════
+// AUTH
+// ═══════════════════════════════════════
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  companyUsers CompanyUser[]
+  apiKeys      ApiKey[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  companyId  String    @map("company_id")
+  keyHash    String    @unique @map("key_hash")
+  prefix     String
+  name       String
+  lastUsedAt DateTime? @map("last_used_at")
+  expiresAt  DateTime? @map("expires_at")
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("api_keys")
+}
+
+// ═══════════════════════════════════════
+// TENANCY (Company = tenant)
+// ═══════════════════════════════════════
+
+model Company {
+  id              String  @id @default(cuid())
+  ruc             String  @unique
+  razonSocial     String  @map("razon_social")
+  nombreComercial String? @map("nombre_comercial")
+  direccion       String
+  ubigeo          String
+  departamento    String
+  provincia       String
+  distrito        String
+  urbanizacion    String?
+  codigoPais      String  @default("PE") @map("codigo_pais")
+
+  // SOL credentials (cifrados AES-256-GCM)
+  solUser String? @map("sol_user")
+  solPass String? @map("sol_pass")
+  solIv   String? @map("sol_iv")
+  solTag  String? @map("sol_tag")
+
+  // Series
+  serieFactura   String @default("F001") @map("serie_factura")
+  serieBoleta    String @default("B001") @map("serie_boleta")
+  serieNCFactura String @default("FC01") @map("serie_nc_factura")
+  serieNDFactura String @default("FD01") @map("serie_nd_factura")
+  serieNCBoleta  String @default("BC01") @map("serie_nc_boleta")
+  serieNDBoleta  String @default("BD01") @map("serie_nd_boleta")
+
+  // Correlativos por serie { "F001": 1, "B001": 1 }
+  nextCorrelativo Json @default("{}") @map("next_correlativo")
+
+  // Config
+  isBeta   Boolean  @default(true) @map("is_beta")
+  isActive Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyUsers CompanyUser[]
+  certificates Certificate[]
+  invoices     Invoice[]
+  apiKeys      ApiKey[]
+  subscription Subscription?
+
+  @@map("companies")
+}
+
+model CompanyUser {
+  id        String @id @default(cuid())
+  userId    String @map("user_id")
+  companyId String @map("company_id")
+  role      String @default("member") // owner, admin, member
+
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([userId, companyId])
+  @@map("company_users")
+}
+
+// ═══════════════════════════════════════
+// CERTIFICADOS DIGITALES
+// ═══════════════════════════════════════
+
+model Certificate {
+  id            String   @id @default(cuid())
+  companyId     String   @map("company_id")
+  pfxData       Bytes    @map("pfx_data")
+  pfxIv         String   @map("pfx_iv")
+  pfxAuthTag    String   @map("pfx_auth_tag")
+  passphrase    String
+  passphraseIv  String   @map("passphrase_iv")
+  passphraseTag String   @map("passphrase_tag")
+  serialNumber  String   @map("serial_number")
+  issuer        String
+  subject       String
+  validFrom     DateTime @map("valid_from")
+  validTo       DateTime @map("valid_to")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("certificates")
+}
+
+// ═══════════════════════════════════════
+// COMPROBANTES ELECTRÓNICOS
+// ═══════════════════════════════════════
+
+model Invoice {
+  id        String @id @default(cuid())
+  companyId String @map("company_id")
+
+  // Identificación
+  tipoDoc       String @map("tipo_doc")
+  serie         String
+  correlativo   Int
+  tipoOperacion String @default("0101") @map("tipo_operacion")
+
+  // Fechas
+  fechaEmision     DateTime  @map("fecha_emision")
+  fechaVencimiento DateTime? @map("fecha_vencimiento")
+
+  // Cliente
+  clienteTipoDoc  String  @map("cliente_tipo_doc")
+  clienteNumDoc   String  @map("cliente_num_doc")
+  clienteNombre   String  @map("cliente_nombre")
+  clienteDireccion String? @map("cliente_direccion")
+  clienteEmail    String? @map("cliente_email")
+
+  // Moneda y totales
+  moneda         String  @default("PEN")
+  opGravadas     Decimal @default(0) @map("op_gravadas") @db.Decimal(12, 2)
+  opExoneradas   Decimal @default(0) @map("op_exoneradas") @db.Decimal(12, 2)
+  opInafectas    Decimal @default(0) @map("op_inafectas") @db.Decimal(12, 2)
+  opGratuitas    Decimal @default(0) @map("op_gratuitas") @db.Decimal(12, 2)
+  igv            Decimal @default(0) @db.Decimal(12, 2)
+  isc            Decimal @default(0) @db.Decimal(12, 2)
+  icbper         Decimal @default(0) @db.Decimal(12, 2)
+  otrosCargos    Decimal @default(0) @map("otros_cargos") @db.Decimal(12, 2)
+  otrosTributos  Decimal @default(0) @map("otros_tributos") @db.Decimal(12, 2)
+  descuentoGlobal Decimal @default(0) @map("descuento_global") @db.Decimal(12, 2)
+  totalVenta     Decimal @map("total_venta") @db.Decimal(12, 2)
+
+  // Forma de pago
+  formaPago String @default("Contado") @map("forma_pago")
+  cuotas    Json?
+
+  // Referencia (NC/ND)
+  docRefTipo        String? @map("doc_ref_tipo")
+  docRefSerie       String? @map("doc_ref_serie")
+  docRefCorrelativo Int?    @map("doc_ref_correlativo")
+  motivoNota        String? @map("motivo_nota")
+
+  // XML
+  xmlContent String?  @map("xml_content")
+  xmlHash    String?  @map("xml_hash")
+  xmlSigned  Boolean  @default(false) @map("xml_signed")
+
+  // Estado SUNAT
+  status       String  @default("DRAFT")
+  sunatCode    String? @map("sunat_code")
+  sunatMessage String? @map("sunat_message")
+  sunatNotes   Json?   @map("sunat_notes")
+  cdrZip       Bytes?  @map("cdr_zip")
+
+  // PDF
+  pdfUrl String? @map("pdf_url")
+
+  // Tracking
+  sentAt        DateTime? @map("sent_at")
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime? @map("last_attempt_at")
+  lastError     String?   @map("last_error")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company       @relation(fields: [companyId], references: [id])
+  items   InvoiceItem[]
+
+  @@unique([companyId, tipoDoc, serie, correlativo])
+  @@index([companyId, status])
+  @@index([companyId, fechaEmision])
+  @@index([companyId, clienteNumDoc])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id        String @id @default(cuid())
+  invoiceId String @map("invoice_id")
+
+  cantidad       Decimal @db.Decimal(12, 3)
+  unidadMedida   String  @default("NIU") @map("unidad_medida")
+  descripcion    String
+  codigo         String?
+  codigoSunat    String? @map("codigo_sunat")
+
+  valorUnitario  Decimal @map("valor_unitario") @db.Decimal(12, 4)
+  precioUnitario Decimal @map("precio_unitario") @db.Decimal(12, 4)
+  valorVenta     Decimal @map("valor_venta") @db.Decimal(12, 2)
+
+  tipoAfectacion String  @default("10") @map("tipo_afectacion")
+  igv            Decimal @default(0) @db.Decimal(12, 2)
+  isc            Decimal @default(0) @db.Decimal(12, 2)
+  icbper         Decimal @default(0) @db.Decimal(12, 2)
+  descuento      Decimal @default(0) @db.Decimal(12, 2)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items")
+}
+
+// ═══════════════════════════════════════
+// BILLING (Suscripciones)
+// ═══════════════════════════════════════
+
+model Plan {
+  id           String  @id @default(cuid())
+  name         String
+  slug         String  @unique
+  priceMonthly Decimal @map("price_monthly") @db.Decimal(8, 2)
+  maxInvoices  Int     @map("max_invoices")
+  maxCompanies Int     @map("max_companies")
+  features     Json
+  isActive     Boolean @default(true) @map("is_active")
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  companyId          String   @unique @map("company_id")
+  planId             String   @map("plan_id")
+  mpPreapprovalId    String?  @map("mp_preapproval_id")
+  status             String   @default("active")
+  currentPeriodStart DateTime @map("current_period_start")
+  currentPeriodEnd   DateTime @map("current_period_end")
+  invoicesUsed       Int      @default(0) @map("invoices_used")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  plan    Plan    @relation(fields: [planId], references: [id])
+
+  @@map("subscriptions")
+}

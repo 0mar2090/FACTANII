@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.github
+*.md
+.env*
+.vscode
+coverage
+test
+.tsbuildinfo
+tsconfig.tsbuildinfo
+.eslintrc*
+.prettierrc*
+.editorconfig
+docs
