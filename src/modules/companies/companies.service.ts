@@ -11,9 +11,20 @@ import { CreateCompanyDto } from './dto/create-company.dto.js';
 import { UpdateCompanyDto } from './dto/update-company.dto.js';
 import { UpdateSolCredentialsDto } from './dto/update-sol-credentials.dto.js';
 
+/** Cached SOL credentials with TTL tracking */
+interface CachedSolCreds {
+  solUser: string;
+  solPass: string;
+  cachedAt: number;
+}
+
 @Injectable()
 export class CompaniesService {
   private readonly logger = new Logger(CompaniesService.name);
+
+  /** In-memory SOL credentials cache keyed by companyId, 5-minute TTL */
+  private readonly solCredsCache = new Map<string, CachedSolCreds>();
+  private static readonly SOL_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -122,11 +133,20 @@ export class CompaniesService {
       },
     });
 
+    // Invalidate cached credentials
+    this.solCredsCache.delete(companyId);
+
     this.logger.log(`SOL credentials updated for company ${companyId}`);
     return { message: 'SOL credentials updated' };
   }
 
   async getSolCredentials(companyId: string): Promise<{ solUser: string; solPass: string } | null> {
+    // Check in-memory cache first
+    const cached = this.solCredsCache.get(companyId);
+    if (cached && (Date.now() - cached.cachedAt) < CompaniesService.SOL_CACHE_TTL_MS) {
+      return { solUser: cached.solUser, solPass: cached.solPass };
+    }
+
     const company = await this.prisma.client.company.findUnique({
       where: { id: companyId },
       select: { solUser: true, solPass: true, solIv: true, solTag: true },
@@ -143,7 +163,12 @@ export class CompaniesService {
     });
 
     const parsed = JSON.parse(decrypted) as { user: string; pass: string };
-    return { solUser: parsed.user, solPass: parsed.pass };
+    const result = { solUser: parsed.user, solPass: parsed.pass };
+
+    // Cache the decrypted credentials
+    this.solCredsCache.set(companyId, { ...result, cachedAt: Date.now() });
+
+    return result;
   }
 
   async ensureUserBelongs(userId: string, companyId: string): Promise<string> {
@@ -173,7 +198,9 @@ export class CompaniesService {
     const { solUser, solPass, solIv, solTag, ...safe } = company;
     return {
       ...safe,
-      hasSolCredentials: !!(solUser && solPass),
+      // Credentials are combined into solUser ciphertext (solPass is null),
+      // so check for the encryption metadata fields instead.
+      hasSolCredentials: !!(solUser && solIv && solTag),
     };
   }
 }

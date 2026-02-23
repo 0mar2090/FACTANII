@@ -71,6 +71,25 @@ describe('CdrProcessorService', () => {
     expect(result.description).toContain('esquema');
   });
 
+  it('accepts informational CDR codes in range 0100-1999', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<ApplicationResponse xmlns="urn:oasis:names:specification:ubl:schema:xsd:ApplicationResponse-2">
+  <DocumentResponse>
+    <Response>
+      <ResponseCode>0100</ResponseCode>
+      <Description>El documento fue aceptado con advertencias</Description>
+    </Response>
+  </DocumentResponse>
+</ApplicationResponse>`;
+
+    const result = service.processCdr(buildCdrZip(xml));
+
+    // fast-xml-parser coerces '0100' to number 100, then String() gives '100'
+    expect(result.responseCode).toBe('100');
+    expect(result.isAccepted).toBe(true);
+    expect(result.hasObservations).toBe(true);
+  });
+
   it('throws on empty ZIP (no XML entry)', () => {
     const zip = new AdmZip();
     zip.addFile('readme.txt', Buffer.from('hello'));

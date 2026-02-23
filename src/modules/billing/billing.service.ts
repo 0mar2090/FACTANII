@@ -4,8 +4,10 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { MercadoPagoConfig, PreApproval } from 'mercadopago';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateSubscriptionDto } from './dto/create-subscription.dto.js';
@@ -259,6 +261,60 @@ export class BillingService {
       initPoint: mpResult.init_point as string,
       status: subscription.status,
     };
+  }
+
+  /**
+   * Verify the HMAC-SHA256 signature sent by Mercado Pago in webhook requests.
+   *
+   * MP sends `x-signature: ts=<ts>,v1=<hash>` where the hash is
+   * HMAC-SHA256 of `id:<dataId>;request-id:<requestId>;ts:<ts>;`
+   *
+   * @throws UnauthorizedException if signature is missing, invalid, or secret is not configured
+   */
+  verifyWebhookSignature(
+    dataId: string | undefined,
+    xSignature: string | undefined,
+    xRequestId: string | undefined,
+  ): void {
+    if (!this.webhookSecret) {
+      throw new UnauthorizedException(
+        'MP_WEBHOOK_SECRET not configured — cannot verify webhook signature',
+      );
+    }
+
+    if (!xSignature) {
+      throw new UnauthorizedException('Missing x-signature header');
+    }
+
+    // Parse x-signature: "ts=1234567890,v1=abc123..."
+    const parts: Record<string, string> = {};
+    for (const part of xSignature.split(',')) {
+      const [key, ...valueParts] = part.split('=');
+      if (key && valueParts.length > 0) {
+        parts[key.trim()] = valueParts.join('=').trim();
+      }
+    }
+
+    const ts = parts['ts'];
+    const v1 = parts['v1'];
+
+    if (!ts || !v1) {
+      throw new UnauthorizedException('Invalid x-signature format');
+    }
+
+    // Build the manifest string per MP docs
+    const manifest = `id:${dataId ?? ''};request-id:${xRequestId ?? ''};ts:${ts};`;
+    const expectedHash = createHmac('sha256', this.webhookSecret)
+      .update(manifest)
+      .digest('hex');
+
+    // Timing-safe comparison to prevent timing attacks
+    const expectedBuf = Buffer.from(expectedHash, 'hex');
+    const receivedBuf = Buffer.from(v1, 'hex');
+
+    if (expectedBuf.length !== receivedBuf.length || !timingSafeEqual(expectedBuf, receivedBuf)) {
+      throw new UnauthorizedException('Invalid webhook signature');
+    }
   }
 
   /**

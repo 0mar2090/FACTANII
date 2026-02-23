@@ -451,10 +451,13 @@ export abstract class BaseXmlBuilder {
 
     // Discount at item level
     if (item.descuento > 0) {
+      const baseAmount = item.cantidad * item.valorUnitario;
+      const discountFactor = baseAmount > 0 ? item.descuento / baseAmount : 0;
+
       const allowanceCharge = line.ele('cac:AllowanceCharge');
       allowanceCharge.ele('cbc:ChargeIndicator').txt('false').up();
       allowanceCharge.ele('cbc:AllowanceChargeReasonCode').txt('00').up();
-      allowanceCharge.ele('cbc:MultiplierFactorNumeric').txt('1').up();
+      allowanceCharge.ele('cbc:MultiplierFactorNumeric').txt(discountFactor.toFixed(5)).up();
       allowanceCharge
         .ele('cbc:Amount')
           .att('currencyID', moneda)
@@ -463,7 +466,7 @@ export abstract class BaseXmlBuilder {
       allowanceCharge
         .ele('cbc:BaseAmount')
           .att('currencyID', moneda)
-          .txt(this.formatAmount(item.cantidad * item.valorUnitario))
+          .txt(this.formatAmount(baseAmount))
         .up();
       allowanceCharge.up();
     }

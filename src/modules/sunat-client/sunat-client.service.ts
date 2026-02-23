@@ -1,8 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as soap from 'soap';
 import axios from 'axios';
 import { SUNAT_ENDPOINTS } from '../../common/constants/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 import type {
   SunatSendResult,
   SunatStatusResult,
@@ -24,8 +29,14 @@ import type {
 @Injectable()
 export class SunatClientService {
   private readonly logger = new Logger(SunatClientService.name);
+  private readonly soapTimeoutMs: number;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: ConfigService) {
+    this.soapTimeoutMs = this.configService.get<number>(
+      'sunat.soapTimeout',
+      60_000,
+    );
+  }
 
   // ───────────────────────────────────────────
   // Public API
@@ -34,17 +45,22 @@ export class SunatClientService {
   /**
    * Send a signed ZIP to SUNAT via the synchronous `sendBill` SOAP operation.
    *
-   * Used for: Facturas (01), Boletas (03), Notas de Credito (07), Notas de Debito (08).
+   * Used for: Facturas (01), Boletas (03), Notas de Credito (07), Notas de Debito (08),
+   * Retenciones (20), Percepciones (40).
+   *
+   * NOTE: Guías de Remisión (09) use the REST API via SunatGreClientService
+   * since RS 000112-2021/SUNAT.
    *
    * SUNAT responds immediately with a CDR ZIP (Constancia de Recepcion) embedded
    * in the SOAP response as a base64 `applicationResponse`.
    *
-   * @param zipBuffer   - The ZIP containing the signed XML document
-   * @param zipFileName - SUNAT-mandated format: `{RUC}-{TIPO}-{SERIE}-{CORRELATIVO}.zip`
-   * @param ruc         - Company RUC (11 digits)
-   * @param solUser     - SOL username (e.g., "MODDATOS" for beta)
-   * @param solPass     - SOL password
-   * @param isBeta      - `true` for beta/testing environment, `false` for production
+   * @param zipBuffer    - The ZIP containing the signed XML document
+   * @param zipFileName  - SUNAT-mandated format: `{RUC}-{TIPO}-{SERIE}-{CORRELATIVO}.zip`
+   * @param ruc          - Company RUC (11 digits)
+   * @param solUser      - SOL username (e.g., "MODDATOS" for beta)
+   * @param solPass      - SOL password
+   * @param isBeta       - `true` for beta/testing environment, `false` for production
+   * @param endpointType - Which SUNAT endpoint to use: 'invoice' (default) or 'retention'
    */
   async sendBill(
     zipBuffer: Buffer,
@@ -53,9 +69,10 @@ export class SunatClientService {
     solUser: string,
     solPass: string,
     isBeta: boolean,
+    endpointType: 'invoice' | 'retention' = 'invoice',
   ): Promise<SunatSendResult> {
     const endpoints = this.resolveEndpoints(isBeta);
-    const wsdlUrl = endpoints.invoice;
+    const wsdlUrl = endpoints[endpointType] ?? endpoints.invoice;
     const soapUser = `${ruc}${solUser}`;
 
     this.logger.log(
@@ -63,7 +80,7 @@ export class SunatClientService {
     );
 
     try {
-      const client = await this.createSoapClient(wsdlUrl, soapUser, solPass);
+      const client = await this.createSoapClient(wsdlUrl, soapUser, solPass, endpointType);
 
       const [result] = await client.sendBillAsync({
         fileName: zipFileName,
@@ -284,18 +301,22 @@ export class SunatClientService {
     wsdlUrl: string,
     soapUser: string,
     soapPass: string,
+    endpointType: 'invoice' | 'retention' = 'invoice',
   ): Promise<soap.Client> {
-    const { join } = await import('node:path');
-
     // Static local WSDL files — avoids all SUNAT WAF issues with WSDL fetching.
     // SUNAT's WAF returns 401 for HTTP requests with User-Agent headers on
     // sub-WSDL/XSD URLs. Using bundled files eliminates this entirely.
-    const wsdlPath = join(process.cwd(), 'src', 'modules', 'sunat-client', 'wsdl', 'main.wsdl');
+    //
+    // Different SUNAT services use different WSDL namespaces:
+    // - Invoice/Boleta/NC/ND: factura.comppago (main.wsdl)
+    // - Retention/Perception: otroscpe (retention.wsdl)
+    const wsdlFile = endpointType === 'retention' ? 'retention.wsdl' : 'main.wsdl';
+    const wsdlPath = join(__dirname, 'wsdl', wsdlFile);
 
     // node-soap 1.7.1 uses axios internally for SOAP HTTP requests.
     // SUNAT WAF blocks 'User-Agent: node-soap/x.x.x' with 401.
     // Provide a custom axios instance that forces an empty User-Agent on all requests.
-    const sunatAxios = axios.create({ timeout: 30_000 });
+    const sunatAxios = axios.create({ timeout: this.soapTimeoutMs });
     sunatAxios.interceptors.request.use((config) => {
       config.headers.set('User-Agent', '');
       return config;
@@ -323,14 +344,12 @@ export class SunatClientService {
       return {
         invoice: SUNAT_ENDPOINTS.BETA.INVOICE,
         retention: SUNAT_ENDPOINTS.BETA.RETENTION,
-        guide: SUNAT_ENDPOINTS.BETA.GUIDE,
       };
     }
 
     return {
       invoice: SUNAT_ENDPOINTS.PRODUCTION.INVOICE,
       retention: SUNAT_ENDPOINTS.PRODUCTION.RETENTION,
-      guide: SUNAT_ENDPOINTS.PRODUCTION.GUIDE,
       consultCdr: SUNAT_ENDPOINTS.PRODUCTION.CONSULT_CDR,
       consultValid: SUNAT_ENDPOINTS.PRODUCTION.CONSULT_VALID,
     };

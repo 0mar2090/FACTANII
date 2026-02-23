@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Body,
+  Headers,
   HttpCode,
   HttpStatus,
   Logger,
@@ -99,11 +100,21 @@ export class BillingController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mercado Pago IPN webhook (internal)' })
   @ApiResponse({ status: 200, description: 'Webhook acknowledged' })
-  async handleWebhook(@Body() body: any) {
+  async handleWebhook(
+    @Body() body: any,
+    @Headers('x-signature') xSignature: string,
+    @Headers('x-request-id') xRequestId: string,
+  ) {
     try {
+      this.billingService.verifyWebhookSignature(
+        body?.data?.id,
+        xSignature,
+        xRequestId,
+      );
       await this.billingService.handleWebhook(body);
     } catch (error: any) {
-      // Log but don't throw — always return 200 to MP
+      // Always return 200 to MP to prevent endless retries.
+      // Log the error for monitoring but never throw.
       this.logger.error(
         `Webhook processing error: ${error.message}`,
         error.stack,

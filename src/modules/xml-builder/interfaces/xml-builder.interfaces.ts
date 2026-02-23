@@ -194,6 +194,139 @@ export interface XmlVoidedData {
   items: XmlVoidedLine[];
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Retención (20), Percepción (40), Guía de Remisión (09)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Línea de un Comprobante de Retención.
+ * Cada línea representa un documento al que se le aplicó retención.
+ */
+export interface XmlRetentionLine {
+  tipoDocRelacionado: string;       // Cat 01 (01=factura, 03=boleta, etc.)
+  serieDocRelacionado: string;
+  correlativoDocRelacionado: number;
+  fechaDocRelacionado: string;      // YYYY-MM-DD
+  moneda: string;                   // PEN, USD
+  importeTotal: number;             // Importe total del documento
+  fechaPago: string;                // YYYY-MM-DD
+  importeRetenido: number;
+  importePagado: number;            // importeTotal - importeRetenido
+  tipoCambio?: number;              // Solo si moneda != PEN
+}
+
+/**
+ * Datos de entrada para construir XML de Comprobante de Retención (20).
+ */
+export interface XmlRetentionData {
+  serie: string;             // R001, etc.
+  correlativo: number;
+  fechaEmision: string;      // YYYY-MM-DD
+  regimenRetencion: string;  // Cat 23: '01' (3%) o '02' (6%)
+  tasaRetencion: number;     // 0.03 o 0.06
+  company: XmlCompany;
+  proveedor: XmlClient;      // A quien se le retiene
+  items: XmlRetentionLine[];
+  totalRetenido: number;
+  totalPagado: number;
+  moneda: string;
+}
+
+/**
+ * Línea de un Comprobante de Percepción.
+ */
+export interface XmlPerceptionLine {
+  tipoDocRelacionado: string;
+  serieDocRelacionado: string;
+  correlativoDocRelacionado: number;
+  fechaDocRelacionado: string;
+  moneda: string;
+  importeTotal: number;
+  fechaCobro: string;               // YYYY-MM-DD
+  importePercibido: number;
+  importeCobrado: number;           // importeTotal + importePercibido
+  tipoCambio?: number;
+}
+
+/**
+ * Datos de entrada para construir XML de Comprobante de Percepción (40).
+ */
+export interface XmlPerceptionData {
+  serie: string;              // P001, etc.
+  correlativo: number;
+  fechaEmision: string;
+  regimenPercepcion: string;  // Cat 22: '01', '02', '03'
+  tasaPercepcion: number;     // 0.02, 0.01, 0.005
+  company: XmlCompany;
+  cliente: XmlClient;         // A quien se le percibe
+  items: XmlPerceptionLine[];
+  totalPercibido: number;
+  totalCobrado: number;
+  moneda: string;
+}
+
+/**
+ * Item de una Guía de Remisión.
+ */
+export interface XmlGuideItem {
+  cantidad: number;
+  unidadMedida: string;      // Cat 03 (NIU, KGM, etc.)
+  descripcion: string;
+  codigo?: string;
+}
+
+/**
+ * Dirección de punto de partida/llegada para Guía de Remisión.
+ */
+export interface XmlGuideAddress {
+  ubigeo: string;            // 6 dígitos
+  direccion: string;
+}
+
+/**
+ * Datos de entrada para construir XML de Guía de Remisión Electrónica (09).
+ */
+export interface XmlGuideData {
+  serie: string;              // T001, etc.
+  correlativo: number;
+  fechaEmision: string;
+  fechaTraslado: string;      // YYYY-MM-DD inicio de traslado
+  motivoTraslado: string;     // Cat 20
+  descripcionMotivo?: string;
+  /** Referenced document when motivoTraslado='01' (Venta) */
+  docReferencia?: {
+    tipoDoc: string;            // '01' factura, '03' boleta
+    serieDoc: string;
+    correlativoDoc: number;
+  };
+  modalidadTransporte: string; // Cat 18: '01' (publico) o '02' (privado)
+  pesoTotal: number;
+  unidadPeso: string;         // 'KGM'
+  numeroBultos?: number;
+  puntoPartida: XmlGuideAddress;
+  puntoLlegada: XmlGuideAddress;
+  company: XmlCompany;
+  destinatario: XmlClient;
+  transportista?: {
+    tipoDoc: string;
+    numDoc: string;
+    nombre: string;
+    registroMTC?: string;
+  };
+  conductor?: {
+    tipoDoc: string;
+    numDoc: string;
+    nombres: string;
+    apellidos: string;
+    licencia: string;
+  };
+  vehiculo?: {
+    placa: string;
+    placaSecundaria?: string;
+  };
+  items: XmlGuideItem[];
+}
+
 /**
  * Datos de entrada para construir XML de Nota de Debito (08).
  */

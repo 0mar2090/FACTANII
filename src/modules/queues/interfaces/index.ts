@@ -4,4 +4,5 @@ export type {
   EmailSendJobData,
   EmailAttachment,
   SummarySendJobData,
+  TicketPollJobData,
 } from './queue-job-data.interfaces.js';

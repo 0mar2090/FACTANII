@@ -4,6 +4,7 @@ import {
   IsOptional,
   Min,
   MaxLength,
+  IsNotEmpty,
 } from 'class-validator';
 
 export class InvoiceItemDto {
@@ -16,6 +17,7 @@ export class InvoiceItemDto {
   unidadMedida?: string; // defaults to NIU
 
   @IsString()
+  @IsNotEmpty()
   @MaxLength(500)
   descripcion: string;
 

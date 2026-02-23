@@ -78,3 +78,28 @@ export interface SummarySendJobData {
   /** Whether to use the beta environment */
   isBeta: boolean;
 }
+
+/**
+ * Job data for the `ticket-poll` queue.
+ *
+ * The processor polls SUNAT until the async operation completes with a CDR.
+ * Supports both SOAP (RC/RA via getStatus) and GRE REST API (via getGuideStatus).
+ */
+export interface TicketPollJobData {
+  /** SUNAT ticket number */
+  ticket: string;
+  /** Invoice record ID */
+  invoiceId: string;
+  /** Company/tenant ID */
+  companyId: string;
+  /** Company RUC */
+  ruc: string;
+  /** SOL username (decrypted) */
+  solUser: string;
+  /** SOL password (decrypted) */
+  solPass: string;
+  /** Whether to use the beta environment */
+  isBeta: boolean;
+  /** Document type: 'summary' (default, SOAP) or 'guide' (GRE REST API) */
+  documentType?: 'summary' | 'guide';
+}

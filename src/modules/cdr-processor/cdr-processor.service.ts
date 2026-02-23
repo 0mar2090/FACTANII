@@ -112,8 +112,13 @@ export class CdrProcessorService {
     // depending on SUNAT CDR version. Check both locations.
     const notes = this.extractNotes(appResponse, documentResponse);
 
-    const isAccepted = responseCode === '0';
-    const hasObservations = isAccepted && notes.length > 0;
+    // SUNAT CDR acceptance rules:
+    // - Code '0': accepted, no issues
+    // - Codes 0100-1999: accepted with informational/observation messages
+    // - Codes >= 2000: rejected
+    const numericCode = /^\d+$/.test(responseCode) ? parseInt(responseCode, 10) : -1;
+    const isAccepted = numericCode >= 0 && numericCode < 2000;
+    const hasObservations = isAccepted && (notes.length > 0 || numericCode >= 100);
 
     this.logger.log(
       `CDR processed: code=${responseCode}, accepted=${isAccepted}, observations=${notes.length}`,

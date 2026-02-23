@@ -8,6 +8,7 @@ import {
   ArrayMinSize,
   MaxLength,
   IsIn,
+  IsNotEmpty,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { InvoiceItemDto } from './invoice-item.dto.js';
@@ -54,15 +55,18 @@ export class CreateInvoiceDto {
 
   /** Tipo doc identidad del cliente (Cat 06) */
   @IsString()
+  @IsIn(['0', '1', '4', '6', '7', '-'])
   clienteTipoDoc: string;
 
   /** Número de documento del cliente */
   @IsString()
+  @IsNotEmpty()
   @MaxLength(20)
   clienteNumDoc: string;
 
   /** Nombre o razón social del cliente */
   @IsString()
+  @IsNotEmpty()
   @MaxLength(300)
   clienteNombre: string;
 

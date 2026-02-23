@@ -159,15 +159,17 @@ export class SummaryBuilder extends BaseXmlBuilder {
       this.addBillingPayment(line, item.opGratuitas, item.moneda, '05');
     }
 
-    // Other charges
-    const allowance = line.ele('cac:AllowanceCharge');
-    allowance.ele('cbc:ChargeIndicator').txt('true').up();
-    allowance
-      .ele('cbc:Amount')
-        .att('currencyID', item.moneda)
-        .txt(this.formatAmount(item.otrosCargos))
-      .up();
-    allowance.up();
+    // Other charges (only emit when > 0)
+    if (item.otrosCargos > 0) {
+      const allowance = line.ele('cac:AllowanceCharge');
+      allowance.ele('cbc:ChargeIndicator').txt('true').up();
+      allowance
+        .ele('cbc:Amount')
+          .att('currencyID', item.moneda)
+          .txt(this.formatAmount(item.otrosCargos))
+        .up();
+      allowance.up();
+    }
 
     // Tax totals
     const taxTotal = line.ele('cac:TaxTotal');

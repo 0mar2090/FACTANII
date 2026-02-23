@@ -156,6 +156,56 @@ export const UIT_2026 = 5500;
 /** Plazo máximo para enviar CPE a SUNAT (días calendario) */
 export const MAX_DAYS_TO_SEND = 3;
 
+/** Catálogo 18: Modalidad de transporte */
+export const MODALIDAD_TRANSPORTE = {
+  TRANSPORTE_PUBLICO: '01',
+  TRANSPORTE_PRIVADO: '02',
+} as const;
+
+/** Catálogo 20: Motivo de traslado (Guía de Remisión) */
+export const MOTIVO_TRASLADO = {
+  VENTA: '01',
+  COMPRA: '02',
+  VENTA_SUJETA_CONFIRMACION: '03',
+  CONSIGNACION: '04',
+  DEVOLUCION: '06',
+  RECOJO_BIENES_TRANSFORMADOS: '07',
+  TRASLADO_ENTRE_ESTABLECIMIENTOS: '08',
+  TRASLADO_ZONA_PRIMARIA: '09',
+  TRASLADO_EMISOR_ITINERANTE: '11',
+  IMPORTACION: '13',
+  EXPORTACION: '14',
+  VENTA_SUJETA_DESTINATARIO_NO_CONFIRMADO: '17',
+  TRASLADO_A_ZONA_PRIMARIA: '18',
+  OTROS: '19',
+} as const;
+
+/** Catálogo 22: Régimen de percepción */
+export const REGIMEN_PERCEPCION = {
+  VENTA_INTERNA_2: '01',
+  ADQUISICION_COMBUSTIBLE_1: '02',
+  VENTA_INTERNA_AL_0_5: '03',
+} as const;
+
+/** Catálogo 23: Régimen de retención */
+export const REGIMEN_RETENCION = {
+  TASA_3: '01',
+  TASA_6: '02',
+} as const;
+
+/** Tasas de retención por régimen */
+export const RETENCION_RATES: Record<string, number> = {
+  '01': 0.03,
+  '02': 0.06,
+} as const;
+
+/** Tasas de percepción por régimen */
+export const PERCEPCION_RATES: Record<string, number> = {
+  '01': 0.02,
+  '02': 0.01,
+  '03': 0.005,
+} as const;
+
 /** Namespaces UBL 2.1 */
 export const UBL_NAMESPACES = {
   INVOICE: 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2',
@@ -163,6 +213,9 @@ export const UBL_NAMESPACES = {
   DEBIT_NOTE: 'urn:oasis:names:specification:ubl:schema:xsd:DebitNote-2',
   SUMMARY_DOCUMENTS: 'urn:sunat:names:specification:ubl:peru:schema:xsd:SummaryDocuments-1',
   VOIDED_DOCUMENTS: 'urn:sunat:names:specification:ubl:peru:schema:xsd:VoidedDocuments-1',
+  DESPATCH_ADVICE: 'urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2',
+  RETENTION: 'urn:sunat:names:specification:ubl:peru:schema:xsd:Retention-1',
+  PERCEPTION: 'urn:sunat:names:specification:ubl:peru:schema:xsd:Perception-1',
   CAC: 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2',
   CBC: 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2',
   DS: 'http://www.w3.org/2000/09/xmldsig#',
@@ -172,21 +225,34 @@ export const UBL_NAMESPACES = {
   UDT: 'urn:oasis:names:specification:ubl:schema:xsd:UnqualifiedDataTypes-2',
 } as const;
 
-/** Endpoints SUNAT */
+/** Endpoints SUNAT — SOAP services */
 export const SUNAT_ENDPOINTS = {
   BETA: {
     INVOICE: 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl',
     RETENTION: 'https://e-beta.sunat.gob.pe/ol-ti-itemision-otroscpe-gem-beta/billService?wsdl',
-    GUIDE: 'https://e-beta.sunat.gob.pe/ol-ti-itemision-guia-gem-beta/billService?wsdl',
   },
   PRODUCTION: {
     INVOICE: 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl',
     RETENTION: 'https://e-factura.sunat.gob.pe/ol-ti-itemision-otroscpe-gem/billService?wsdl',
-    GUIDE: 'https://e-guiaremision.sunat.gob.pe/ol-ti-itemision-guia-gem/billService?wsdl',
     CONSULT_CDR: 'https://e-factura.sunat.gob.pe/ol-it-wsconscpegem/billConsultService?wsdl',
     CONSULT_VALID: 'https://e-factura.sunat.gob.pe/ol-it-wsconsvalidcpe/billValidService?wsdl',
   },
 } as const;
+
+/** Endpoints SUNAT — GRE REST API (RS 000112-2021, vigente 2025-2026) */
+export const SUNAT_GRE_ENDPOINTS = {
+  BETA: {
+    AUTH: 'https://gre-beta.sunat.gob.pe/v1/clientessol',
+    API: 'https://gre-beta.sunat.gob.pe/v1/contribuyente/gem',
+  },
+  PRODUCTION: {
+    AUTH: 'https://api-seguridad.sunat.gob.pe/v1/clientessol',
+    API: 'https://api-cpe.sunat.gob.pe/v1/contribuyente/gem',
+  },
+} as const;
+
+/** OAuth2 scope for SUNAT GRE API */
+export const SUNAT_GRE_OAUTH_SCOPE = 'https://api-cpe.sunat.gob.pe' as const;
 
 /** Credenciales beta de prueba */
 export const SUNAT_BETA_CREDENTIALS = {

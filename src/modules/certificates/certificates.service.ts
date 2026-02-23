@@ -17,9 +17,22 @@ export interface CertificateInfo {
   validTo: Date;
 }
 
+/** Cached active certificate data per company */
+interface CachedCertificate {
+  pfxBuffer: Buffer;
+  passphrase: string;
+  info: CertificateInfo;
+  cachedAt: number;
+}
+
 @Injectable()
 export class CertificatesService {
   private readonly logger = new Logger(CertificatesService.name);
+
+  /** In-memory cache for decrypted active certificates, keyed by companyId */
+  private readonly certCache = new Map<string, CachedCertificate>();
+  /** Cache TTL: 10 minutes (certificates rarely change mid-session) */
+  private static readonly CERT_CACHE_TTL_MS = 10 * 60 * 1000;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -35,36 +48,41 @@ export class CertificatesService {
       throw new BadRequestException('Certificate has expired');
     }
 
-    // Deactivate previous certificates for this company
-    await this.prisma.client.certificate.updateMany({
-      where: { companyId, isActive: true },
-      data: { isActive: false },
-    });
-
     // Encrypt PFX data
     const encPfx = encryptBuffer(pfxBuffer);
 
     // Encrypt passphrase
     const encPassphrase = encrypt(passphrase);
 
-    // Store
-    const certificate = await this.prisma.client.certificate.create({
-      data: {
-        companyId,
-        pfxData: new Uint8Array(encPfx.ciphertext),
-        pfxIv: encPfx.iv,
-        pfxAuthTag: encPfx.authTag,
-        passphrase: encPassphrase.ciphertext,
-        passphraseIv: encPassphrase.iv,
-        passphraseTag: encPassphrase.authTag,
-        serialNumber: info.serialNumber,
-        issuer: info.issuer,
-        subject: info.subject,
-        validFrom: info.validFrom,
-        validTo: info.validTo,
-        isActive: true,
-      },
+    // Atomically deactivate old certs and create new one in a transaction
+    // to prevent leaving the company without an active certificate if create fails
+    const certificate = await this.prisma.client.$transaction(async (tx) => {
+      await tx.certificate.updateMany({
+        where: { companyId, isActive: true },
+        data: { isActive: false },
+      });
+
+      return tx.certificate.create({
+        data: {
+          companyId,
+          pfxData: new Uint8Array(encPfx.ciphertext),
+          pfxIv: encPfx.iv,
+          pfxAuthTag: encPfx.authTag,
+          passphrase: encPassphrase.ciphertext,
+          passphraseIv: encPassphrase.iv,
+          passphraseTag: encPassphrase.authTag,
+          serialNumber: info.serialNumber,
+          issuer: info.issuer,
+          subject: info.subject,
+          validFrom: info.validFrom,
+          validTo: info.validTo,
+          isActive: true,
+        },
+      });
     });
+
+    // Invalidate cached certificate for this company
+    this.certCache.delete(companyId);
 
     this.logger.log(
       `Certificate uploaded for company ${companyId}: SN=${info.serialNumber}, expires=${info.validTo.toISOString()}`,
@@ -82,13 +100,21 @@ export class CertificatesService {
   }
 
   /**
-   * Get the active certificate for a company (decrypted PFX + passphrase)
+   * Get the active certificate for a company (decrypted PFX + passphrase).
+   * Results are cached in memory for 10 minutes to avoid repeated DB queries
+   * and AES decryption. Cache is invalidated on certificate upload.
    */
   async getActiveCertificate(companyId: string): Promise<{
     pfxBuffer: Buffer;
     passphrase: string;
     info: CertificateInfo;
   }> {
+    // Check in-memory cache first
+    const cached = this.certCache.get(companyId);
+    if (cached && (Date.now() - cached.cachedAt) < CertificatesService.CERT_CACHE_TTL_MS) {
+      return { pfxBuffer: cached.pfxBuffer, passphrase: cached.passphrase, info: cached.info };
+    }
+
     const cert = await this.prisma.client.certificate.findFirst({
       where: { companyId, isActive: true },
     });
@@ -109,17 +135,18 @@ export class CertificatesService {
       authTag: cert.passphraseTag,
     });
 
-    return {
-      pfxBuffer,
-      passphrase,
-      info: {
-        serialNumber: cert.serialNumber,
-        issuer: cert.issuer,
-        subject: cert.subject,
-        validFrom: cert.validFrom,
-        validTo: cert.validTo,
-      },
+    const info: CertificateInfo = {
+      serialNumber: cert.serialNumber,
+      issuer: cert.issuer,
+      subject: cert.subject,
+      validFrom: cert.validFrom,
+      validTo: cert.validTo,
     };
+
+    // Cache the decrypted result
+    this.certCache.set(companyId, { pfxBuffer, passphrase, info, cachedAt: Date.now() });
+
+    return { pfxBuffer, passphrase, info };
   }
 
   /**

@@ -9,13 +9,21 @@ import {
   TIPO_AFECTACION_IGV,
   MOTIVO_NOTA_CREDITO,
   MOTIVO_NOTA_DEBITO,
+  MOTIVO_TRASLADO,
+  MODALIDAD_TRANSPORTE,
+  REGIMEN_RETENCION,
+  REGIMEN_PERCEPCION,
   TIPO_MONEDA,
   IGV_RATE,
   MAX_DAYS_TO_SEND,
 } from '../../../common/constants/index.js';
+import { round2 } from '../../../common/utils/tax-calculator.js';
 import type { CreateInvoiceDto } from '../../invoices/dto/create-invoice.dto.js';
 import type { CreateCreditNoteDto } from '../../invoices/dto/create-credit-note.dto.js';
 import type { CreateDebitNoteDto } from '../../invoices/dto/create-debit-note.dto.js';
+import type { CreateRetentionDto } from '../../invoices/dto/create-retention.dto.js';
+import type { CreatePerceptionDto } from '../../invoices/dto/create-perception.dto.js';
+import type { CreateGuideDto } from '../../invoices/dto/create-guide.dto.js';
 
 /** A validation error with field and message */
 interface ValidationError {
@@ -79,6 +87,34 @@ export class XmlValidatorService {
           field: 'clienteTipoDoc',
           message: 'Boleta cannot use RUC as client document type',
         });
+      }
+
+      // Boletas > S/700 require client identification (SUNAT rule)
+      // Only apply IGV to gravado oneroso items ('10' or default);
+      // exonerado ('20'+), inafecto ('30'+), exportación ('40'), and
+      // gravado gratuito ('11'-'17') don't add to the buyer's total.
+      const estimatedTotal = round2(dto.items.reduce((sum, item) => {
+        const qty = item.cantidad ?? 0;
+        const unit = item.valorUnitario ?? 0;
+        const afectacion = item.tipoAfectacion ?? '10';
+        const isGravadoOneroso = afectacion === '10';
+        const igvMultiplier = isGravadoOneroso ? (1 + IGV_RATE) : 1;
+        // Gratuitas (11-17, 21, 31-36) don't contribute to buyer total
+        const isGratuita = ['11','12','13','14','15','16','17','21','31','32','33','34','35','36'].includes(afectacion);
+        return sum + (isGratuita ? 0 : qty * unit * igvMultiplier);
+      }, 0));
+
+      if (estimatedTotal > 700) {
+        const anonymousDocTypes = [TIPO_DOC_IDENTIDAD.OTROS, TIPO_DOC_IDENTIDAD.NO_DOMICILIADO];
+        const isAnonymous = anonymousDocTypes.includes(dto.clienteTipoDoc as any)
+          || !dto.clienteNumDoc || dto.clienteNumDoc.trim() === '';
+
+        if (isAnonymous) {
+          errors.push({
+            field: 'clienteNumDoc',
+            message: 'Boleta over S/700 requires client identification (DNI, CE, or passport)',
+          });
+        }
       }
     }
 
@@ -208,6 +244,253 @@ export class XmlValidatorService {
       errors.push({
         field: 'motivoDescripcion',
         message: 'Debit note reason description is required',
+      });
+    }
+
+    this.throwIfErrors(errors);
+  }
+
+  /**
+   * Validate a Comprobante de Retención (20) before XML generation.
+   *
+   * @throws BadRequestException if validation fails
+   */
+  validateRetention(dto: CreateRetentionDto): void {
+    const errors: ValidationError[] = [];
+
+    // Validate regime
+    const validRegimes = Object.values(REGIMEN_RETENCION);
+    if (!validRegimes.includes(dto.regimenRetencion as any)) {
+      errors.push({
+        field: 'regimenRetencion',
+        message: `Invalid retention regime. Valid codes: ${validRegimes.join(', ')}`,
+      });
+    }
+
+    // Proveedor must have RUC
+    if (dto.proveedorTipoDoc !== TIPO_DOC_IDENTIDAD.RUC) {
+      errors.push({
+        field: 'proveedorTipoDoc',
+        message: 'Retention documents require a provider with RUC (tipo documento 6)',
+      });
+    }
+
+    if (dto.proveedorNumDoc && dto.proveedorNumDoc.length !== 11) {
+      errors.push({
+        field: 'proveedorNumDoc',
+        message: 'RUC must be exactly 11 digits',
+      });
+    }
+
+    // Validate emission date
+    this.validateEmissionDate(dto.fechaEmision, errors);
+
+    // Validate items
+    if (!dto.items || dto.items.length === 0) {
+      errors.push({
+        field: 'items',
+        message: 'At least one retention item is required',
+      });
+    } else {
+      for (let i = 0; i < dto.items.length; i++) {
+        const item = dto.items[i]!;
+        if (item.importeTotal <= 0) {
+          errors.push({
+            field: `items[${i}].importeTotal`,
+            message: 'Document amount must be greater than zero',
+          });
+        }
+        // tipoCambio is required when moneda is not PEN
+        if (item.moneda && item.moneda !== 'PEN' && !item.tipoCambio) {
+          errors.push({
+            field: `items[${i}].tipoCambio`,
+            message: 'Exchange rate (tipoCambio) is required for foreign currency',
+          });
+        }
+      }
+    }
+
+    this.throwIfErrors(errors);
+  }
+
+  /**
+   * Validate a Comprobante de Percepción (40) before XML generation.
+   *
+   * @throws BadRequestException if validation fails
+   */
+  validatePerception(dto: CreatePerceptionDto): void {
+    const errors: ValidationError[] = [];
+
+    // Validate regime
+    const validRegimes = Object.values(REGIMEN_PERCEPCION);
+    if (!validRegimes.includes(dto.regimenPercepcion as any)) {
+      errors.push({
+        field: 'regimenPercepcion',
+        message: `Invalid perception regime. Valid codes: ${validRegimes.join(', ')}`,
+      });
+    }
+
+    // Cliente must be identified
+    if (!dto.clienteNumDoc || dto.clienteNumDoc.trim() === '') {
+      errors.push({
+        field: 'clienteNumDoc',
+        message: 'Client document number is required for perception documents',
+      });
+    }
+
+    // Validate emission date
+    this.validateEmissionDate(dto.fechaEmision, errors);
+
+    // Validate items
+    if (!dto.items || dto.items.length === 0) {
+      errors.push({
+        field: 'items',
+        message: 'At least one perception item is required',
+      });
+    } else {
+      for (let i = 0; i < dto.items.length; i++) {
+        const item = dto.items[i]!;
+        if (item.importeTotal <= 0) {
+          errors.push({
+            field: `items[${i}].importeTotal`,
+            message: 'Document amount must be greater than zero',
+          });
+        }
+        // tipoCambio is required when moneda is not PEN
+        if (item.moneda && item.moneda !== 'PEN' && !item.tipoCambio) {
+          errors.push({
+            field: `items[${i}].tipoCambio`,
+            message: 'Exchange rate (tipoCambio) is required for foreign currency',
+          });
+        }
+      }
+    }
+
+    this.throwIfErrors(errors);
+  }
+
+  /**
+   * Validate a Guía de Remisión (09) before XML generation.
+   *
+   * @throws BadRequestException if validation fails
+   */
+  validateGuide(dto: CreateGuideDto): void {
+    const errors: ValidationError[] = [];
+
+    // Validate motivo de traslado
+    const validMotivos = Object.values(MOTIVO_TRASLADO);
+    if (!validMotivos.includes(dto.motivoTraslado as any)) {
+      errors.push({
+        field: 'motivoTraslado',
+        message: `Invalid transfer reason. Valid codes: ${validMotivos.join(', ')}`,
+      });
+    }
+
+    // When motivo is Venta ('01'), docReferencia is required
+    if (dto.motivoTraslado === MOTIVO_TRASLADO.VENTA && !dto.docReferencia) {
+      errors.push({
+        field: 'docReferencia',
+        message: 'Document reference is required when transfer reason is Venta (01)',
+      });
+    }
+
+    // Validate modalidad de transporte
+    const validModalidades = Object.values(MODALIDAD_TRANSPORTE);
+    if (!validModalidades.includes(dto.modalidadTransporte as any)) {
+      errors.push({
+        field: 'modalidadTransporte',
+        message: `Invalid transport mode. Valid codes: ${validModalidades.join(', ')}`,
+      });
+    }
+
+    // Peso must be positive
+    if (dto.pesoTotal <= 0) {
+      errors.push({
+        field: 'pesoTotal',
+        message: 'Total weight must be greater than zero',
+      });
+    }
+
+    // Addresses must be complete with valid 6-digit ubigeo
+    const ubigeoRegex = /^\d{6}$/;
+
+    if (!dto.puntoPartida?.ubigeo || !dto.puntoPartida?.direccion) {
+      errors.push({
+        field: 'puntoPartida',
+        message: 'Origin address with ubigeo and direccion is required',
+      });
+    } else if (!ubigeoRegex.test(dto.puntoPartida.ubigeo)) {
+      errors.push({
+        field: 'puntoPartida.ubigeo',
+        message: 'Ubigeo must be exactly 6 digits',
+      });
+    }
+
+    if (!dto.puntoLlegada?.ubigeo || !dto.puntoLlegada?.direccion) {
+      errors.push({
+        field: 'puntoLlegada',
+        message: 'Destination address with ubigeo and direccion is required',
+      });
+    } else if (!ubigeoRegex.test(dto.puntoLlegada.ubigeo)) {
+      errors.push({
+        field: 'puntoLlegada.ubigeo',
+        message: 'Ubigeo must be exactly 6 digits',
+      });
+    }
+
+    // If public transport, transportista is required
+    if (dto.modalidadTransporte === MODALIDAD_TRANSPORTE.TRANSPORTE_PUBLICO) {
+      if (!dto.transportista) {
+        errors.push({
+          field: 'transportista',
+          message: 'Carrier (transportista) is required for public transport mode',
+        });
+      }
+    }
+
+    // If private transport, conductor and vehiculo are required
+    if (dto.modalidadTransporte === MODALIDAD_TRANSPORTE.TRANSPORTE_PRIVADO) {
+      if (!dto.conductor) {
+        errors.push({
+          field: 'conductor',
+          message: 'Driver (conductor) is required for private transport mode',
+        });
+      } else if (!dto.conductor.licencia) {
+        errors.push({
+          field: 'conductor.licencia',
+          message: 'Driver license (licencia) is required for private transport mode',
+        });
+      }
+      if (!dto.vehiculo) {
+        errors.push({
+          field: 'vehiculo',
+          message: 'Vehicle (vehiculo) is required for private transport mode',
+        });
+      }
+    }
+
+    // Validate emission date
+    this.validateEmissionDate(dto.fechaEmision, errors);
+
+    // SUNAT requires fechaTraslado >= fechaEmision (code 4273)
+    if (dto.fechaTraslado && dto.fechaEmision) {
+      const traslado = new Date(dto.fechaTraslado);
+      const emision = new Date(dto.fechaEmision);
+      traslado.setHours(0, 0, 0, 0);
+      emision.setHours(0, 0, 0, 0);
+      if (traslado < emision) {
+        errors.push({
+          field: 'fechaTraslado',
+          message: 'Transfer date must be equal to or later than emission date',
+        });
+      }
+    }
+
+    // Validate items
+    if (!dto.items || dto.items.length === 0) {
+      errors.push({
+        field: 'items',
+        message: 'At least one item is required',
       });
     }
 

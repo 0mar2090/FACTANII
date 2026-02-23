@@ -375,33 +375,15 @@ export function buildA4Template(data: PdfInvoiceData): TDocumentDefinitions {
   // Left: QR placeholder + hash
   const leftInfo: Content[] = [];
 
-  // QR placeholder (outlined rectangle)
-  leftInfo.push({
-    table: {
-      widths: [80],
-      heights: [80],
-      body: [
-        [
-          {
-            text: 'QR',
-            alignment: 'center' as const,
-            color: TEXT_MUTED,
-            fontSize: 8,
-            margin: [0, 32, 0, 0],
-          },
-        ],
-      ],
-    },
-    layout: {
-      hLineWidth: () => 0.5,
-      vLineWidth: () => 0.5,
-      hLineColor: () => '#bdbdbd',
-      vLineColor: () => '#bdbdbd',
-      hLineStyle: () => ({ dash: { length: 3, space: 2 } }),
-      vLineStyle: () => ({ dash: { length: 3, space: 2 } }),
-    },
-    margin: [0, 0, 0, 6],
-  });
+  // QR code image (SUNAT CPE)
+  if (data.qrDataUri) {
+    leftInfo.push({
+      image: data.qrDataUri,
+      width: 90,
+      height: 90,
+      margin: [0, 0, 0, 6],
+    } as any);
+  }
 
   if (xmlHash) {
     leftInfo.push({

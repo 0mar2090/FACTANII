@@ -35,6 +35,7 @@ import { HealthModule } from './modules/health/health.module.js';
 // Global guards
 import { TenantThrottlerGuard } from './common/guards/tenant-throttler.guard.js';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard.js';
+import { ApiKeyGuard } from './common/guards/api-key.guard.js';
 import { TenantGuard } from './common/guards/tenant.guard.js';
 import { RolesGuard } from './common/guards/roles.guard.js';
 
@@ -111,9 +112,10 @@ import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor.js
     HealthModule,
   ],
   providers: [
-    // Guard order: TenantThrottlerGuard → JwtAuthGuard → TenantGuard → RolesGuard
+    // Guard order: TenantThrottlerGuard → JwtAuthGuard → ApiKeyGuard → TenantGuard → RolesGuard
     { provide: APP_GUARD, useClass: TenantThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: ApiKeyGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
 

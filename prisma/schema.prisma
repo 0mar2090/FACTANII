@@ -77,7 +77,10 @@ model Company {
   serieNCFactura String @default("FC01") @map("serie_nc_factura")
   serieNDFactura String @default("FD01") @map("serie_nd_factura")
   serieNCBoleta  String @default("BC01") @map("serie_nc_boleta")
-  serieNDBoleta  String @default("BD01") @map("serie_nd_boleta")
+  serieNDBoleta      String @default("BD01") @map("serie_nd_boleta")
+  serieRetencion     String @default("R001") @map("serie_retencion")
+  seriePercepcion    String @default("P001") @map("serie_percepcion")
+  serieGuiaRemision  String @default("T001") @map("serie_guia_remision")
 
   // Correlativos por serie { "F001": 1, "B001": 1 }
   nextCorrelativo Json @default("{}") @map("next_correlativo")

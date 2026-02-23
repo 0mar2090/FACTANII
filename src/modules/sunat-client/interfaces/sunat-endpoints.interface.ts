@@ -1,5 +1,8 @@
 /**
  * Set of WSDL endpoints for a given SUNAT environment (beta or production).
+ *
+ * NOTE: GRE (Guía de Remisión) uses the REST API (see SunatGreClientService),
+ * not SOAP, so there is no `guide` endpoint here.
  */
 export interface SunatEndpoints {
   /** Main billing service (invoices, boletas, credit/debit notes) */
@@ -7,9 +10,6 @@ export interface SunatEndpoints {
 
   /** Retention & perception documents */
   retention?: string;
-
-  /** Transport guides (guias de remision) */
-  guide?: string;
 
   /** CDR consultation service (production only) */
   consultCdr?: string;

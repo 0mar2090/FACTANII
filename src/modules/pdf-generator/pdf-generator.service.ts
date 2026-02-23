@@ -5,6 +5,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import QRCode from 'qrcode';
 import type { TDocumentDefinitions, TFontDictionary } from 'pdfmake/interfaces.js';
 
 // pdfmake doesn't have proper ESM exports — use CJS require for the printer class
@@ -72,6 +73,7 @@ export class PdfGeneratorService {
       `Generating A4 PDF for ${data.tipoDocNombre} ${data.serie}-${data.correlativo}`,
     );
 
+    data.qrDataUri = await this.generateQrDataUri(data);
     const docDefinition = buildA4Template(data);
     return this.generatePdfBuffer(docDefinition);
   }
@@ -91,8 +93,41 @@ export class PdfGeneratorService {
       `Generating ticket PDF for ${data.tipoDocNombre} ${data.serie}-${data.correlativo}`,
     );
 
+    data.qrDataUri = await this.generateQrDataUri(data);
     const docDefinition = buildTicketTemplate(data);
     return this.generatePdfBuffer(docDefinition);
+  }
+
+  /**
+   * Generate QR code data URI for SUNAT CPE.
+   *
+   * Format: RUC|TipoDoc|Serie|Correlativo|IGV|Total|FechaEmision|TipoDocCliente|NumDocCliente|Hash
+   * Date format in QR: dd/MM/yyyy (same as fechaEmision in PdfInvoiceData)
+   */
+  private async generateQrDataUri(data: PdfInvoiceData): Promise<string> {
+    const qrContent = [
+      data.companyRuc,
+      data.tipoDoc,
+      data.serie,
+      data.correlativo,
+      data.igv.toFixed(2),
+      data.totalVenta.toFixed(2),
+      data.fechaEmision,
+      data.clienteTipoDoc,
+      data.clienteNumDoc,
+      data.xmlHash ?? '',
+    ].join('|');
+
+    try {
+      return await QRCode.toDataURL(qrContent, {
+        errorCorrectionLevel: 'M',
+        margin: 1,
+        width: 150,
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to generate QR code: ${err instanceof Error ? err.message : err}`);
+      return '';
+    }
   }
 
   /**

@@ -11,6 +11,7 @@ import {
   QUEUE_PDF_GENERATE,
   QUEUE_EMAIL_SEND,
   QUEUE_SUMMARY_SEND,
+  QUEUE_TICKET_POLL,
 } from './queues.constants.js';
 
 // Processors
@@ -18,6 +19,7 @@ import { InvoiceSendProcessor } from './processors/invoice-send.processor.js';
 import { PdfGenerateProcessor } from './processors/pdf-generate.processor.js';
 import { EmailSendProcessor } from './processors/email-send.processor.js';
 import { SummarySendProcessor } from './processors/summary-send.processor.js';
+import { TicketPollProcessor } from './processors/ticket-poll.processor.js';
 
 // Feature modules whose services are injected into processors
 import { XmlBuilderModule } from '../xml-builder/xml-builder.module.js';
@@ -105,6 +107,18 @@ import { WebhooksModule } from '../webhooks/webhooks.module.js';
           removeOnFail: { count: 5000 },
         },
       },
+      {
+        name: QUEUE_TICKET_POLL,
+        defaultJobOptions: {
+          attempts: 20,
+          backoff: {
+            type: 'fixed',
+            delay: 30_000, // Poll every 30s — SUNAT typically processes in 1-15 min
+          },
+          removeOnComplete: { count: 1000 },
+          removeOnFail: { count: 5000 },
+        },
+      },
     ),
 
     // Feature modules providing services consumed by processors
@@ -123,6 +137,7 @@ import { WebhooksModule } from '../webhooks/webhooks.module.js';
     PdfGenerateProcessor,
     EmailSendProcessor,
     SummarySendProcessor,
+    TicketPollProcessor,
   ],
   // Export BullModule so other modules can inject Queue instances to add jobs
   exports: [BullModule],

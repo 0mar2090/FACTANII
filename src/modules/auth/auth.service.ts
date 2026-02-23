@@ -11,6 +11,7 @@ import { scrypt, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { RegisterDto, LoginDto, CreateApiKeyDto } from './dto/index.js';
 import type { JwtPayload } from '../../common/interfaces/index.js';
 
@@ -43,6 +44,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -72,6 +74,11 @@ export class AuthService {
     });
 
     this.logger.log(`User registered: ${user.email} (${user.id})`);
+
+    // Send welcome email (fire-and-forget — don't block registration)
+    void this.notifications.sendWelcome(user.email, user.name).catch((err) => {
+      this.logger.warn(`Failed to send welcome email to ${user.email}: ${err.message}`);
+    });
 
     const tokens = await this.generateTokens({
       sub: user.id,

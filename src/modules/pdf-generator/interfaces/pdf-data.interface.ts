@@ -54,6 +54,8 @@ export interface PdfInvoiceData {
   montoEnLetras: string;
 
   // ── SUNAT response ──
+  /** Base64 data URI of the QR code PNG image */
+  qrDataUri?: string;
   /** SHA-256 hash of the signed XML (shown as "Valor resumen") */
   xmlHash?: string;
   /** SUNAT response code, e.g. "0" for accepted */

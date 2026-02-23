@@ -8,12 +8,18 @@ import { CreditNoteBuilder } from './builders/credit-note.builder.js';
 import { DebitNoteBuilder } from './builders/debit-note.builder.js';
 import { SummaryBuilder } from './builders/summary.builder.js';
 import { VoidedBuilder } from './builders/voided.builder.js';
+import { RetentionBuilder } from './builders/retention.builder.js';
+import { PerceptionBuilder } from './builders/perception.builder.js';
+import { GuideBuilder } from './builders/guide.builder.js';
 import type {
   XmlInvoiceData,
   XmlCreditNoteData,
   XmlDebitNoteData,
   XmlSummaryData,
   XmlVoidedData,
+  XmlRetentionData,
+  XmlPerceptionData,
+  XmlGuideData,
 } from './interfaces/xml-builder.interfaces.js';
 
 /**
@@ -41,6 +47,9 @@ export class XmlBuilderService {
   private readonly debitNoteBuilder = new DebitNoteBuilder();
   private readonly summaryBuilder = new SummaryBuilder();
   private readonly voidedBuilder = new VoidedBuilder();
+  private readonly retentionBuilder = new RetentionBuilder();
+  private readonly perceptionBuilder = new PerceptionBuilder();
+  private readonly guideBuilder = new GuideBuilder();
 
   /**
    * Build XML for a Factura (01) or Boleta (03).
@@ -143,6 +152,66 @@ export class XmlBuilderService {
 
     this.logger.debug(
       `Voided XML built successfully: ${id} (${xml.length} bytes)`,
+    );
+
+    return xml;
+  }
+
+  /**
+   * Build XML for a Comprobante de Retención (20).
+   *
+   * @param data - Complete retention data including agent, receiver, and document references
+   * @returns Unsigned XML string ready for signing
+   */
+  buildRetention(data: XmlRetentionData): string {
+    this.logger.log(
+      `Building Retention XML: ${data.serie}-${data.correlativo} (regime ${data.regimenRetencion})`,
+    );
+
+    const xml = this.retentionBuilder.build(data);
+
+    this.logger.debug(
+      `Retention XML built successfully: ${data.serie}-${data.correlativo} (${xml.length} bytes)`,
+    );
+
+    return xml;
+  }
+
+  /**
+   * Build XML for a Comprobante de Percepción (40).
+   *
+   * @param data - Complete perception data including agent, receiver, and document references
+   * @returns Unsigned XML string ready for signing
+   */
+  buildPerception(data: XmlPerceptionData): string {
+    this.logger.log(
+      `Building Perception XML: ${data.serie}-${data.correlativo} (regime ${data.regimenPercepcion})`,
+    );
+
+    const xml = this.perceptionBuilder.build(data);
+
+    this.logger.debug(
+      `Perception XML built successfully: ${data.serie}-${data.correlativo} (${xml.length} bytes)`,
+    );
+
+    return xml;
+  }
+
+  /**
+   * Build XML for a Guía de Remisión Electrónica (09).
+   *
+   * @param data - Complete guide data including shipment, addresses, and items
+   * @returns Unsigned XML string ready for signing
+   */
+  buildGuide(data: XmlGuideData): string {
+    this.logger.log(
+      `Building Guide XML: ${data.serie}-${data.correlativo} (motivo ${data.motivoTraslado})`,
+    );
+
+    const xml = this.guideBuilder.build(data);
+
+    this.logger.debug(
+      `Guide XML built successfully: ${data.serie}-${data.correlativo} (${xml.length} bytes)`,
     );
 
     return xml;

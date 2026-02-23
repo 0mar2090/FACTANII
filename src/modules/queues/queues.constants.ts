@@ -41,6 +41,16 @@ export const QUEUE_EMAIL_SEND = 'email-send' as const;
 export const QUEUE_SUMMARY_SEND = 'summary-send' as const;
 
 /**
+ * Queue name for polling SUNAT getStatus for async operations
+ * (Resumen Diario, Comunicacion de Baja).
+ *
+ * - Polls getStatus with ticket number
+ * - 15 retry attempts with exponential backoff (10s base, max 5min)
+ * - Concurrency: 3
+ */
+export const QUEUE_TICKET_POLL = 'ticket-poll' as const;
+
+/**
  * All queue names as an array, useful for bulk operations.
  */
 export const ALL_QUEUES = [
@@ -48,6 +58,7 @@ export const ALL_QUEUES = [
   QUEUE_PDF_GENERATE,
   QUEUE_EMAIL_SEND,
   QUEUE_SUMMARY_SEND,
+  QUEUE_TICKET_POLL,
 ] as const;
 
 export type QueueName = (typeof ALL_QUEUES)[number];

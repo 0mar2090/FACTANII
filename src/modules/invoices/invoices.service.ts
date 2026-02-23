@@ -12,10 +12,12 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { XmlBuilderService } from '../xml-builder/xml-builder.service.js';
 import { XmlSignerService } from '../xml-signer/xml-signer.service.js';
 import { SunatClientService } from '../sunat-client/sunat-client.service.js';
+import { SunatGreClientService } from '../sunat-client/sunat-gre-client.service.js';
 import { CdrProcessorService } from '../cdr-processor/cdr-processor.service.js';
 import { CertificatesService } from '../certificates/certificates.service.js';
 import { CompaniesService } from '../companies/companies.service.js';
 import { PdfGeneratorService } from '../pdf-generator/pdf-generator.service.js';
+import { BillingService } from '../billing/billing.service.js';
 import type { PdfInvoiceData, PdfInvoiceItem } from '../pdf-generator/interfaces/pdf-data.interface.js';
 import { XmlValidatorService } from '../xml-builder/validators/xml-validator.js';
 import { createZipFromXml } from '../../common/utils/zip.js';
@@ -25,8 +27,12 @@ import {
   round2,
 } from '../../common/utils/tax-calculator.js';
 import { amountToWords } from '../../common/utils/amount-to-words.js';
-import { TIPO_DOCUMENTO } from '../../common/constants/index.js';
-import { QUEUE_INVOICE_SEND } from '../queues/queues.constants.js';
+import {
+  TIPO_DOCUMENTO,
+  RETENCION_RATES,
+  PERCEPCION_RATES,
+} from '../../common/constants/index.js';
+import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL } from '../queues/queues.constants.js';
 import type {
   XmlInvoiceData,
   XmlCreditNoteData,
@@ -38,12 +44,21 @@ import type {
   XmlInvoiceItem,
   XmlCompany,
   XmlClient,
+  XmlRetentionData,
+  XmlRetentionLine,
+  XmlPerceptionData,
+  XmlPerceptionLine,
+  XmlGuideData,
+  XmlGuideItem,
 } from '../xml-builder/interfaces/xml-builder.interfaces.js';
 import type { CreateInvoiceDto } from './dto/create-invoice.dto.js';
 import type { CreateCreditNoteDto } from './dto/create-credit-note.dto.js';
 import type { CreateDebitNoteDto } from './dto/create-debit-note.dto.js';
 import type { CreateSummaryDto } from './dto/create-summary.dto.js';
 import type { CreateVoidedDto } from './dto/create-voided.dto.js';
+import type { CreateRetentionDto } from './dto/create-retention.dto.js';
+import type { CreatePerceptionDto } from './dto/create-perception.dto.js';
+import type { CreateGuideDto } from './dto/create-guide.dto.js';
 import type { InvoiceResponseDto } from './dto/invoice-response.dto.js';
 
 @Injectable()
@@ -55,12 +70,15 @@ export class InvoicesService {
     private readonly xmlBuilder: XmlBuilderService,
     private readonly xmlSigner: XmlSignerService,
     private readonly sunatClient: SunatClientService,
+    private readonly sunatGreClient: SunatGreClientService,
     private readonly cdrProcessor: CdrProcessorService,
     private readonly certificates: CertificatesService,
     private readonly companies: CompaniesService,
     private readonly xmlValidator: XmlValidatorService,
     private readonly pdfGenerator: PdfGeneratorService,
+    private readonly billing: BillingService,
     @InjectQueue(QUEUE_INVOICE_SEND) private readonly invoiceSendQueue: Queue,
+    @InjectQueue(QUEUE_TICKET_POLL) private readonly ticketPollQueue: Queue,
   ) {}
 
   /**
@@ -82,6 +100,9 @@ export class InvoicesService {
   ): Promise<InvoiceResponseDto> {
     // 0. Pre-send validation
     this.xmlValidator.validateInvoice(dto);
+
+    // 0.5. Enforce billing quota
+    await this.enforceQuota(companyId);
 
     // 1. Load company data
     const company = await this.prisma.client.company.findUnique({
@@ -338,6 +359,9 @@ export class InvoicesService {
       `Invoice created: ${serie}-${correlativo} (${tipoDoc}) status=${status} sunat=${sunatCode ?? 'N/A'}`,
     );
 
+    // Increment billing quota counter (fire-and-forget)
+    void this.billing.incrementInvoiceCount(companyId);
+
     return this.toResponseDto(invoice);
   }
 
@@ -351,6 +375,9 @@ export class InvoicesService {
     // 0. Pre-send validation
     this.xmlValidator.validateCreditNote(dto);
 
+    // 0.5. Enforce billing quota
+    await this.enforceQuota(companyId);
+
     const company = await this.prisma.client.company.findUnique({
       where: { id: companyId },
     });
@@ -362,13 +389,14 @@ export class InvoicesService {
     const tipoDoc = TIPO_DOCUMENTO.NOTA_CREDITO;
 
     // Determine serie based on referenced document type
-    const serieKey =
-      dto.docRefTipo === '01' ? 'serieNCFactura' : 'serieNCBoleta';
+    const serieName = dto.docRefTipo === '01'
+      ? company.serieNCFactura
+      : company.serieNCBoleta;
     const { serie, correlativo } = await this.getNextCorrelativo(
       companyId,
       tipoDoc,
       company,
-      (company as any)[serieKey] as string,
+      serieName,
     );
 
     const calculatedItems = dto.items.map((item) => {
@@ -539,6 +567,9 @@ export class InvoicesService {
     });
 
     this.logger.log(`Credit Note created: ${serie}-${correlativo} status=${status}`);
+
+    void this.billing.incrementInvoiceCount(companyId);
+
     return this.toResponseDto(invoice);
   }
 
@@ -552,6 +583,9 @@ export class InvoicesService {
     // 0. Pre-send validation
     this.xmlValidator.validateDebitNote(dto);
 
+    // 0.5. Enforce billing quota
+    await this.enforceQuota(companyId);
+
     const company = await this.prisma.client.company.findUnique({
       where: { id: companyId },
     });
@@ -562,13 +596,14 @@ export class InvoicesService {
     const moneda = dto.moneda ?? 'PEN';
     const tipoDoc = TIPO_DOCUMENTO.NOTA_DEBITO;
 
-    const serieKey =
-      dto.docRefTipo === '01' ? 'serieNDFactura' : 'serieNDBoleta';
+    const serieName = dto.docRefTipo === '01'
+      ? company.serieNDFactura
+      : company.serieNDBoleta;
     const { serie, correlativo } = await this.getNextCorrelativo(
       companyId,
       tipoDoc,
       company,
-      (company as any)[serieKey] as string,
+      serieName,
     );
 
     const calculatedItems = dto.items.map((item) => {
@@ -739,6 +774,9 @@ export class InvoicesService {
     });
 
     this.logger.log(`Debit Note created: ${serie}-${correlativo} status=${status}`);
+
+    void this.billing.incrementInvoiceCount(companyId);
+
     return this.toResponseDto(invoice);
   }
 
@@ -898,6 +936,11 @@ export class InvoicesService {
       '03': 'BOLETA DE VENTA ELECTRÓNICA',
       '07': 'NOTA DE CRÉDITO ELECTRÓNICA',
       '08': 'NOTA DE DÉBITO ELECTRÓNICA',
+      '09': 'GUÍA DE REMISIÓN ELECTRÓNICA',
+      '20': 'COMPROBANTE DE RETENCIÓN ELECTRÓNICA',
+      '40': 'COMPROBANTE DE PERCEPCIÓN ELECTRÓNICA',
+      'RC': 'RESUMEN DIARIO',
+      'RA': 'COMUNICACIÓN DE BAJA',
     };
     const CURRENCY_SYMBOLS: Record<string, string> = {
       PEN: 'S/',
@@ -1040,6 +1083,27 @@ export class InvoicesService {
       throw new BadRequestException('SOL credentials required for production');
     }
 
+    // Persist Invoice record so ticket-poll processor can update it
+    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc: 'RC',
+        serie: rcSerieKey,
+        correlativo,
+        fechaEmision: new Date(fechaEmision),
+        clienteTipoDoc: '6',
+        clienteNumDoc: company.ruc,
+        clienteNombre: company.razonSocial,
+        moneda,
+        totalVenta: summaryLines.reduce((s, i) => s + i.totalVenta, 0),
+        xmlContent: signedXml,
+        xmlHash,
+        xmlSigned: true,
+        status: 'SENDING',
+      },
+    });
+
     // Send to SUNAT (async — returns ticket)
     let ticket: string | undefined;
     let status = 'SENDING';
@@ -1064,7 +1128,26 @@ export class InvoicesService {
       sunatMessage = error.message;
     }
 
+    // Update persisted record with send result
+    await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
+      data: { status, sunatMessage },
+    });
+
     this.logger.log(`Summary created: ${summaryId} status=${status} ticket=${ticket ?? 'N/A'}`);
+
+    // Enqueue ticket polling if we got a ticket
+    if (ticket) {
+      void this.ticketPollQueue.add('poll', {
+        ticket,
+        invoiceId: invoice.id,
+        companyId,
+        ruc,
+        solUser,
+        solPass,
+        isBeta: company.isBeta,
+      } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
+    }
 
     return { ticket, id: summaryId, status, sunatMessage };
   }
@@ -1132,6 +1215,27 @@ export class InvoicesService {
       throw new BadRequestException('SOL credentials required for production');
     }
 
+    // Persist Invoice record so ticket-poll processor can update it
+    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc: 'RA',
+        serie: raSerieKey,
+        correlativo,
+        fechaEmision: new Date(fechaEmision),
+        clienteTipoDoc: '6',
+        clienteNumDoc: company.ruc,
+        clienteNombre: company.razonSocial,
+        moneda: 'PEN',
+        totalVenta: 0,
+        xmlContent: signedXml,
+        xmlHash,
+        xmlSigned: true,
+        status: 'SENDING',
+      },
+    });
+
     // Send to SUNAT (async — returns ticket)
     let ticket: string | undefined;
     let status = 'SENDING';
@@ -1156,14 +1260,396 @@ export class InvoicesService {
       sunatMessage = error.message;
     }
 
+    // Update persisted record with send result
+    await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
+      data: { status, sunatMessage },
+    });
+
     this.logger.log(`Voided created: ${voidedId} status=${status} ticket=${ticket ?? 'N/A'}`);
+
+    // Enqueue ticket polling if we got a ticket
+    if (ticket) {
+      void this.ticketPollQueue.add('poll', {
+        ticket,
+        invoiceId: invoice.id,
+        companyId,
+        ruc,
+        solUser,
+        solPass,
+        isBeta: company.isBeta,
+      } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
+    }
 
     return { ticket, id: voidedId, status, sunatMessage };
   }
 
   /**
+   * Create, sign, and send a Comprobante de Retención (20) to SUNAT.
+   */
+  async createRetention(
+    companyId: string,
+    dto: CreateRetentionDto,
+  ): Promise<InvoiceResponseDto> {
+    this.xmlValidator.validateRetention(dto);
+
+    const { company, cert, ruc, solUser, solPass, xmlCompany } =
+      await this.prepareDocumentContext(companyId);
+
+    const tipoDoc = TIPO_DOCUMENTO.RETENCION;
+    const moneda = 'PEN';
+    const tasaRetencion = RETENCION_RATES[dto.regimenRetencion] ?? 0.03;
+
+    const serieRetencion = company.serieRetencion;
+    const { serie, correlativo } = await this.getNextCorrelativo(
+      companyId, tipoDoc, company, serieRetencion,
+    );
+
+    // Calculate retention amounts per item
+    const retentionItems: XmlRetentionLine[] = dto.items.map((item) => {
+      const importeRetenido = round2(item.importeTotal * tasaRetencion);
+      const importePagado = round2(item.importeTotal - importeRetenido);
+      return {
+        tipoDocRelacionado: item.tipoDocRelacionado,
+        serieDocRelacionado: item.serieDoc,
+        correlativoDocRelacionado: item.correlativoDoc,
+        fechaDocRelacionado: item.fechaDoc,
+        moneda: item.moneda ?? moneda,
+        importeTotal: item.importeTotal,
+        fechaPago: item.fechaPago,
+        importeRetenido,
+        importePagado,
+        tipoCambio: item.tipoCambio,
+      };
+    });
+
+    const totalRetenido = round2(retentionItems.reduce((s, i) => s + i.importeRetenido, 0));
+    const totalPagado = round2(retentionItems.reduce((s, i) => s + i.importePagado, 0));
+
+    const xmlProveedor: XmlClient = {
+      tipoDocIdentidad: dto.proveedorTipoDoc,
+      numDocIdentidad: dto.proveedorNumDoc,
+      nombre: dto.proveedorNombre,
+      direccion: dto.proveedorDireccion,
+    };
+
+    const retentionData: XmlRetentionData = {
+      serie, correlativo,
+      fechaEmision: dto.fechaEmision,
+      regimenRetencion: dto.regimenRetencion,
+      tasaRetencion,
+      company: xmlCompany,
+      proveedor: xmlProveedor,
+      items: retentionItems,
+      totalRetenido, totalPagado, moneda,
+    };
+
+    const xmlContent = this.xmlBuilder.buildRetention(retentionData);
+    const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
+    const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
+
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
+      await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta, 'retention');
+
+    const totalVenta = round2(retentionItems.reduce((s, i) => s + i.importeTotal, 0));
+
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: tipoDoc, // '20' for retention (no Cat 51 code applies)
+        fechaEmision: new Date(dto.fechaEmision),
+        clienteTipoDoc: dto.proveedorTipoDoc,
+        clienteNumDoc: dto.proveedorNumDoc,
+        clienteNombre: dto.proveedorNombre,
+        moneda,
+        totalVenta,
+        xmlContent: signedXml,
+        xmlHash,
+        xmlSigned: true,
+        status,
+        sunatCode,
+        sunatMessage,
+        sunatNotes: sunatNotes ?? undefined,
+        cdrZip: cdrZip ? new Uint8Array(cdrZip) : undefined,
+        sentAt: status !== 'PENDING' ? new Date() : undefined,
+        attempts: status !== 'PENDING' ? 1 : 0,
+        lastAttemptAt: new Date(),
+      },
+    });
+
+    this.logger.log(`Retention created: ${serie}-${correlativo} status=${status}`);
+    void this.billing.incrementInvoiceCount(companyId);
+    return this.toResponseDto(invoice);
+  }
+
+  /**
+   * Create, sign, and send a Comprobante de Percepción (40) to SUNAT.
+   */
+  async createPerception(
+    companyId: string,
+    dto: CreatePerceptionDto,
+  ): Promise<InvoiceResponseDto> {
+    this.xmlValidator.validatePerception(dto);
+
+    const { company, cert, ruc, solUser, solPass, xmlCompany } =
+      await this.prepareDocumentContext(companyId);
+
+    const tipoDoc = TIPO_DOCUMENTO.PERCEPCION;
+    const moneda = 'PEN';
+    const tasaPercepcion = PERCEPCION_RATES[dto.regimenPercepcion] ?? 0.02;
+
+    const seriePercepcion = company.seriePercepcion;
+    const { serie, correlativo } = await this.getNextCorrelativo(
+      companyId, tipoDoc, company, seriePercepcion,
+    );
+
+    // Calculate perception amounts per item
+    const perceptionItems: XmlPerceptionLine[] = dto.items.map((item) => {
+      const importePercibido = round2(item.importeTotal * tasaPercepcion);
+      const importeCobrado = round2(item.importeTotal + importePercibido);
+      return {
+        tipoDocRelacionado: item.tipoDocRelacionado,
+        serieDocRelacionado: item.serieDoc,
+        correlativoDocRelacionado: item.correlativoDoc,
+        fechaDocRelacionado: item.fechaDoc,
+        moneda: item.moneda ?? moneda,
+        importeTotal: item.importeTotal,
+        fechaCobro: item.fechaCobro,
+        importePercibido,
+        importeCobrado,
+        tipoCambio: item.tipoCambio,
+      };
+    });
+
+    const totalPercibido = round2(perceptionItems.reduce((s, i) => s + i.importePercibido, 0));
+    const totalCobrado = round2(perceptionItems.reduce((s, i) => s + i.importeCobrado, 0));
+
+    const xmlCliente: XmlClient = {
+      tipoDocIdentidad: dto.clienteTipoDoc,
+      numDocIdentidad: dto.clienteNumDoc,
+      nombre: dto.clienteNombre,
+      direccion: dto.clienteDireccion,
+    };
+
+    const perceptionData: XmlPerceptionData = {
+      serie, correlativo,
+      fechaEmision: dto.fechaEmision,
+      regimenPercepcion: dto.regimenPercepcion,
+      tasaPercepcion,
+      company: xmlCompany,
+      cliente: xmlCliente,
+      items: perceptionItems,
+      totalPercibido, totalCobrado, moneda,
+    };
+
+    const xmlContent = this.xmlBuilder.buildPerception(perceptionData);
+    const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
+    const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
+
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
+      await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta, 'retention');
+
+    const totalVenta = round2(perceptionItems.reduce((s, i) => s + i.importeTotal, 0));
+
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: tipoDoc, // '40' for perception (no Cat 51 code applies)
+        fechaEmision: new Date(dto.fechaEmision),
+        clienteTipoDoc: dto.clienteTipoDoc,
+        clienteNumDoc: dto.clienteNumDoc,
+        clienteNombre: dto.clienteNombre,
+        moneda,
+        totalVenta,
+        xmlContent: signedXml,
+        xmlHash,
+        xmlSigned: true,
+        status,
+        sunatCode,
+        sunatMessage,
+        sunatNotes: sunatNotes ?? undefined,
+        cdrZip: cdrZip ? new Uint8Array(cdrZip) : undefined,
+        sentAt: status !== 'PENDING' ? new Date() : undefined,
+        attempts: status !== 'PENDING' ? 1 : 0,
+        lastAttemptAt: new Date(),
+      },
+    });
+
+    this.logger.log(`Perception created: ${serie}-${correlativo} status=${status}`);
+    void this.billing.incrementInvoiceCount(companyId);
+    return this.toResponseDto(invoice);
+  }
+
+  /**
+   * Create, sign, and send a Guía de Remisión (09) to SUNAT via REST API.
+   *
+   * Since RS 000112-2021/SUNAT, GRE uses a REST API with OAuth2 authentication.
+   * The flow is asynchronous: sendGuide returns a ticket, then we poll for the CDR.
+   * If the CDR is not immediately available, we queue a ticket-poll job.
+   */
+  async createGuide(
+    companyId: string,
+    dto: CreateGuideDto,
+  ): Promise<InvoiceResponseDto> {
+    this.xmlValidator.validateGuide(dto);
+
+    const { company, cert, ruc, solUser, solPass, xmlCompany } =
+      await this.prepareDocumentContext(companyId);
+
+    const tipoDoc = TIPO_DOCUMENTO.GUIA_REMISION_REMITENTE;
+
+    const serieGuia = company.serieGuiaRemision;
+    const { serie, correlativo } = await this.getNextCorrelativo(
+      companyId, tipoDoc, company, serieGuia,
+    );
+
+    const xmlDestinatario: XmlClient = {
+      tipoDocIdentidad: dto.destinatarioTipoDoc,
+      numDocIdentidad: dto.destinatarioNumDoc,
+      nombre: dto.destinatarioNombre,
+    };
+
+    const guideItems: XmlGuideItem[] = dto.items.map((item) => ({
+      cantidad: item.cantidad,
+      unidadMedida: item.unidadMedida ?? 'NIU',
+      descripcion: item.descripcion,
+      codigo: item.codigo,
+    }));
+
+    const guideData: XmlGuideData = {
+      serie,
+      correlativo,
+      fechaEmision: dto.fechaEmision,
+      fechaTraslado: dto.fechaTraslado,
+      motivoTraslado: dto.motivoTraslado,
+      descripcionMotivo: dto.descripcionMotivo,
+      docReferencia: dto.docReferencia,
+      modalidadTransporte: dto.modalidadTransporte,
+      pesoTotal: dto.pesoTotal,
+      unidadPeso: 'KGM',
+      numeroBultos: dto.numeroBultos,
+      puntoPartida: dto.puntoPartida,
+      puntoLlegada: dto.puntoLlegada,
+      company: xmlCompany,
+      destinatario: xmlDestinatario,
+      transportista: dto.transportista,
+      conductor: dto.conductor,
+      vehiculo: dto.vehiculo,
+      items: guideItems,
+    };
+
+    const xmlContent = this.xmlBuilder.buildGuide(guideData);
+    const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
+    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
+
+    const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
+    const zipFileName = xmlFileName.replace('.xml', '.zip');
+    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
+
+    let status = 'SENDING';
+    let sunatCode: string | undefined;
+    let sunatMessage: string | undefined;
+    let sunatNotes: string[] | undefined;
+    let cdrZip: Buffer | undefined;
+    let ticket: string | undefined;
+
+    try {
+      // Send via SUNAT GRE REST API (returns ticket, async processing)
+      const sendResult = await this.sunatGreClient.sendGuide(
+        zipBuffer, zipFileName, ruc, solUser, solPass,
+        serie, correlativo, company.isBeta,
+      );
+
+      if (sendResult.success && sendResult.numTicket) {
+        ticket = sendResult.numTicket;
+        this.logger.log(`GRE sent, ticket=${ticket}. Polling for CDR...`);
+
+        // Attempt to retrieve CDR immediately (SUNAT often processes quickly)
+        const statusResult = await this.sunatGreClient.getGuideStatus(
+          ticket, ruc, solUser, solPass, company.isBeta,
+        );
+
+        if (statusResult.success && statusResult.cdrZip) {
+          const cdr = this.cdrProcessor.processCdr(statusResult.cdrZip);
+          sunatCode = cdr.responseCode;
+          sunatMessage = cdr.description;
+          sunatNotes = cdr.notes;
+          cdrZip = statusResult.cdrZip;
+          status = cdr.isAccepted ? (cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED') : 'REJECTED';
+        } else {
+          // CDR not yet ready — queue for async polling
+          status = 'QUEUED';
+          sunatMessage = `Ticket: ${ticket}. CDR pending.`;
+        }
+      } else {
+        status = 'REJECTED';
+        sunatMessage = sendResult.message;
+      }
+    } catch (error: any) {
+      this.logger.error(`SUNAT GRE send failed for ${serie}-${correlativo}: ${error.message}`);
+      status = 'PENDING';
+      sunatMessage = error.message;
+    }
+
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: tipoDoc, // '09' for guide (no Cat 51 code applies)
+        fechaEmision: new Date(dto.fechaEmision),
+        clienteTipoDoc: dto.destinatarioTipoDoc,
+        clienteNumDoc: dto.destinatarioNumDoc,
+        clienteNombre: dto.destinatarioNombre,
+        moneda: 'PEN',
+        totalVenta: 0, // Guide has no monetary totals
+        xmlContent: signedXml,
+        xmlHash,
+        xmlSigned: true,
+        status,
+        sunatCode,
+        sunatMessage,
+        sunatNotes: sunatNotes ?? undefined,
+        cdrZip: cdrZip ? new Uint8Array(cdrZip) : undefined,
+        sentAt: cdrZip ? new Date() : undefined,
+        attempts: 1,
+        lastAttemptAt: new Date(),
+      },
+    });
+
+    // If CDR not yet available, queue a ticket-poll job
+    if (status === 'QUEUED' && ticket) {
+      await this.ticketPollQueue.add('poll-gre-cdr', {
+        invoiceId: invoice.id,
+        companyId,
+        ticket,
+        ruc,
+        solUser,
+        solPass,
+        isBeta: company.isBeta,
+        documentType: 'guide',
+      });
+    }
+
+    this.logger.log(`Guide created: ${serie}-${correlativo} status=${status}`);
+    void this.billing.incrementInvoiceCount(companyId);
+    return this.toResponseDto(invoice);
+  }
+
+  /**
    * Resend a failed/rejected invoice to SUNAT.
    * Only allowed for REJECTED or DRAFT status.
+   *
+   * Supported document types: 01, 03, 07, 08, 20, 40 (synchronous sendBill).
+   * RC/RA (async summaries) and 09 (GRE REST API) cannot be resent — they
+   * must be re-created since their send flow is fundamentally different.
    */
   async resend(
     companyId: string,
@@ -1175,6 +1661,15 @@ export class InvoicesService {
 
     if (!invoice) {
       throw new NotFoundException('Invoice not found');
+    }
+
+    // RC/RA use sendSummary (async with ticket), GRE uses REST API.
+    // These cannot be resent via the standard sendBill queue.
+    const nonResendableTypes = ['RC', 'RA', '09'];
+    if (nonResendableTypes.includes(invoice.tipoDoc)) {
+      throw new BadRequestException(
+        `Cannot resend document type "${invoice.tipoDoc}". Resúmenes Diarios (RC), Comunicaciones de Baja (RA), and Guías de Remisión (09) must be re-created instead.`,
+      );
     }
 
     if (invoice.status !== 'REJECTED' && invoice.status !== 'DRAFT') {
@@ -1268,6 +1763,81 @@ export class InvoicesService {
     return result[0].next_correlativo[serieKey]!;
   }
 
+  /**
+   * Common preparation for all document types: load company, cert, SOL creds,
+   * resolve beta credentials. Reduces duplication across create methods.
+   */
+  private async prepareDocumentContext(companyId: string) {
+    await this.enforceQuota(companyId);
+
+    const company = await this.prisma.client.company.findUnique({
+      where: { id: companyId },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    const cert = await this.certificates.getActiveCertificate(companyId);
+    const solCreds = await this.companies.getSolCredentials(companyId);
+
+    const ruc = company.isBeta ? '20000000001' : company.ruc;
+    const solUser = company.isBeta ? 'MODDATOS' : (solCreds?.solUser ?? '');
+    const solPass = company.isBeta ? 'moddatos' : (solCreds?.solPass ?? '');
+
+    if (!company.isBeta && (!solUser || !solPass)) {
+      throw new BadRequestException('SOL credentials required for production');
+    }
+
+    return { company, cert, ruc, solUser, solPass, xmlCompany: this.buildXmlCompany(company) };
+  }
+
+  /**
+   * Common: sign XML, create ZIP, and send to SUNAT via SOAP.
+   * Returns the CDR processing result or error status.
+   */
+  private async signAndSendSoap(
+    signedXml: string,
+    xmlFileName: string,
+    ruc: string,
+    solUser: string,
+    solPass: string,
+    isBeta: boolean,
+    endpointType: 'invoice' | 'retention' = 'invoice',
+  ) {
+    const zipFileName = xmlFileName.replace('.xml', '.zip');
+    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
+    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
+
+    let status = 'SENDING';
+    let sunatCode: string | undefined;
+    let sunatMessage: string | undefined;
+    let sunatNotes: string[] | undefined;
+    let cdrZip: Buffer | undefined;
+
+    try {
+      const result = await this.sunatClient.sendBill(
+        zipBuffer, zipFileName, ruc, solUser, solPass, isBeta, endpointType,
+      );
+
+      if (result.success && result.cdrZip) {
+        const cdr = this.cdrProcessor.processCdr(result.cdrZip);
+        sunatCode = cdr.responseCode;
+        sunatMessage = cdr.description;
+        sunatNotes = cdr.notes;
+        cdrZip = result.cdrZip;
+        status = cdr.isAccepted ? (cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED') : 'REJECTED';
+      } else {
+        status = 'REJECTED';
+        sunatCode = result.rawFaultCode ?? result.code;
+        sunatMessage = result.rawFaultString ?? result.message;
+      }
+    } catch (error: any) {
+      this.logger.error(`SUNAT send failed: ${error.message}`);
+      status = 'PENDING';
+      sunatMessage = error.message;
+    }
+
+    return { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, zipBuffer, zipFileName };
+  }
+
   private buildXmlCompany(company: any): XmlCompany {
     return {
       ruc: company.ruc,
@@ -1281,6 +1851,15 @@ export class InvoicesService {
       urbanizacion: company.urbanizacion ?? undefined,
       codigoPais: company.codigoPais,
     };
+  }
+
+  private async enforceQuota(companyId: string): Promise<void> {
+    const quota = await this.billing.checkQuota(companyId);
+    if (!quota.allowed) {
+      throw new BadRequestException(
+        `Invoice quota exceeded: ${quota.used}/${quota.max} used this period. Upgrade your plan to continue.`,
+      );
+    }
   }
 
   private toResponseDto(invoice: any): InvoiceResponseDto {

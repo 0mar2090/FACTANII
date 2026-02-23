@@ -349,7 +349,17 @@ export function buildTicketTemplate(data: PdfInvoiceData): TDocumentDefinitions 
 
   content.push(separator());
 
-  // ── 7. Hash + SUNAT response ─────────────────────────────────────
+  // ── 7. QR code + Hash + SUNAT response ──────────────────────────
+
+  if (data.qrDataUri) {
+    content.push({
+      image: data.qrDataUri,
+      width: 80,
+      height: 80,
+      alignment: 'center',
+      margin: [0, 4, 0, 4],
+    } as any);
+  }
 
   if (xmlHash) {
     content.push({
