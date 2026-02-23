@@ -4,7 +4,7 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
-import * as forge from 'node-forge';
+import forge from 'node-forge';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { encrypt, encryptBuffer, decryptBuffer, decrypt } from '../../common/utils/encryption.js';
 import type { EncryptedData } from '../../common/utils/encryption.js';
@@ -51,7 +51,7 @@ export class CertificatesService {
     const certificate = await this.prisma.client.certificate.create({
       data: {
         companyId,
-        pfxData: encPfx.ciphertext,
+        pfxData: new Uint8Array(encPfx.ciphertext),
         pfxIv: encPfx.iv,
         pfxAuthTag: encPfx.authTag,
         passphrase: encPassphrase.ciphertext,

@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD, APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bullmq';
 import { ClsModule } from 'nestjs-cls';
 
@@ -33,6 +33,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { HealthModule } from './modules/health/health.module.js';
 
 // Global guards
+import { TenantThrottlerGuard } from './common/guards/tenant-throttler.guard.js';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard.js';
 import { TenantGuard } from './common/guards/tenant.guard.js';
 import { RolesGuard } from './common/guards/roles.guard.js';
@@ -110,8 +111,8 @@ import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor.js
     HealthModule,
   ],
   providers: [
-    // Guard order: ThrottlerGuard → JwtAuthGuard → TenantGuard → RolesGuard
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Guard order: TenantThrottlerGuard → JwtAuthGuard → TenantGuard → RolesGuard
+    { provide: APP_GUARD, useClass: TenantThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_GUARD, useClass: RolesGuard },

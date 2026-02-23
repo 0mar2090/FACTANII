@@ -2,9 +2,9 @@
 // Invoice Send Processor — Sends signed invoices to SUNAT via SOAP
 // ═══════════════════════════════════════════════════════════════════
 
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import type { Job } from 'bullmq';
+import type { Job, Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { XmlBuilderService } from '../../xml-builder/xml-builder.service.js';
 import { XmlSignerService } from '../../xml-signer/xml-signer.service.js';
@@ -12,9 +12,15 @@ import { SunatClientService } from '../../sunat-client/sunat-client.service.js';
 import { CdrProcessorService } from '../../cdr-processor/cdr-processor.service.js';
 import { CertificatesService } from '../../certificates/certificates.service.js';
 import { CompaniesService } from '../../companies/companies.service.js';
+import { WebhooksService } from '../../webhooks/webhooks.service.js';
 import { createZipFromXml } from '../../../common/utils/zip.js';
-import { QUEUE_INVOICE_SEND } from '../queues.constants.js';
+import {
+  QUEUE_INVOICE_SEND,
+  QUEUE_PDF_GENERATE,
+  QUEUE_EMAIL_SEND,
+} from '../queues.constants.js';
 import type { InvoiceSendJobData } from '../interfaces/index.js';
+import type { WebhookEvent } from '../../webhooks/dto/webhook.dto.js';
 
 /**
  * BullMQ processor for sending invoices to SUNAT.
@@ -47,6 +53,9 @@ export class InvoiceSendProcessor extends WorkerHost {
     private readonly cdrProcessor: CdrProcessorService,
     private readonly certificates: CertificatesService,
     private readonly companies: CompaniesService,
+    private readonly webhooks: WebhooksService,
+    @InjectQueue(QUEUE_PDF_GENERATE) private readonly pdfQueue: Queue,
+    @InjectQueue(QUEUE_EMAIL_SEND) private readonly emailQueue: Queue,
   ) {
     super();
   }
@@ -185,7 +194,7 @@ export class InvoiceSendProcessor extends WorkerHost {
           sunatCode: cdr.responseCode,
           sunatMessage: cdr.description,
           sunatNotes: cdr.notes.length > 0 ? cdr.notes : undefined,
-          cdrZip: result.cdrZip,
+          cdrZip: result.cdrZip ? new Uint8Array(result.cdrZip) : undefined,
           sentAt: new Date(),
           attempts: invoice.attempts + 1,
           lastAttemptAt: new Date(),
@@ -196,6 +205,9 @@ export class InvoiceSendProcessor extends WorkerHost {
       this.logger.log(
         `Invoice ${invoice.serie}-${invoice.correlativo} sent to SUNAT: status=${status}, code=${cdr.responseCode}`,
       );
+
+      // === Post-send pipeline ===
+      await this.triggerPostSendPipeline(invoice, companyId, status);
     } else {
       // SUNAT returned an error without CDR — may be retriable
       const errorMessage = result.rawFaultString ?? result.message ?? 'Unknown SUNAT error';
@@ -216,6 +228,69 @@ export class InvoiceSendProcessor extends WorkerHost {
       throw new Error(
         `SUNAT sendBill failed for ${zipFileName}: ${errorMessage}`,
       );
+    }
+  }
+
+  /**
+   * After SUNAT responds, trigger webhook, email, and PDF generation.
+   */
+  private async triggerPostSendPipeline(
+    invoice: { id: string; tipoDoc: string; serie: string; correlativo: number; clienteEmail: string | null; xmlContent: string | null; sunatCode?: string | null; sunatMessage?: string | null },
+    companyId: string,
+    status: string,
+  ): Promise<void> {
+    // 1. Webhook notification
+    const eventMap: Record<string, WebhookEvent> = {
+      ACCEPTED: 'invoice.accepted',
+      OBSERVED: 'invoice.accepted',
+      REJECTED: 'invoice.rejected',
+    };
+    const event = eventMap[status];
+    if (event) {
+      try {
+        await this.webhooks.notifyInvoiceStatus(companyId, { ...invoice, status }, event);
+      } catch (err: any) {
+        this.logger.warn(`Webhook dispatch failed: ${err.message}`);
+      }
+    }
+
+    // 2. Queue PDF generation
+    try {
+      await this.pdfQueue.add(
+        'post-send-pdf',
+        { invoiceId: invoice.id, companyId, format: 'a4' },
+        { jobId: `pdf-${invoice.id}-${Date.now()}` },
+      );
+    } catch (err: any) {
+      this.logger.warn(`Failed to queue PDF generation: ${err.message}`);
+    }
+
+    // 3. Queue email notification if client has an email
+    if (invoice.clienteEmail && (status === 'ACCEPTED' || status === 'OBSERVED')) {
+      try {
+        const correlativoPadded = String(invoice.correlativo).padStart(8, '0');
+        const docNumber = `${invoice.serie}-${correlativoPadded}`;
+        await this.emailQueue.add(
+          'invoice-notification',
+          {
+            to: invoice.clienteEmail,
+            subject: `Comprobante electrónico ${docNumber}`,
+            body: `<p>Estimado cliente,</p><p>Su comprobante electrónico ${docNumber} ha sido aceptado por SUNAT.</p><p>Adjuntamos el XML del documento.</p>`,
+            attachments: invoice.xmlContent
+              ? [
+                  {
+                    filename: `${docNumber}.xml`,
+                    content: Buffer.from(invoice.xmlContent).toString('base64'),
+                    contentType: 'application/xml',
+                  },
+                ]
+              : undefined,
+          },
+          { jobId: `email-${invoice.id}-${Date.now()}` },
+        );
+      } catch (err: any) {
+        this.logger.warn(`Failed to queue email notification: ${err.message}`);
+      }
     }
   }
 }

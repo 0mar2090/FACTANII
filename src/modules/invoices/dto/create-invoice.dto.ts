@@ -25,9 +25,10 @@ export class PaymentInstallmentDto {
 }
 
 export class CreateInvoiceDto {
-  /** Tipo de documento: "01" = Factura, "03" = Boleta */
+  /** Tipo de documento: "01" = Factura, "03" = Boleta (set automatically by endpoint) */
   @IsString()
   @IsIn(['01', '03'])
+  @IsOptional()
   tipoDoc: string;
 
   /** Tipo de operacion Cat 51 (default "0101") */

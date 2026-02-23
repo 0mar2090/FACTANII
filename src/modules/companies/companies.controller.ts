@@ -17,6 +17,7 @@ import { UpdateSolCredentialsDto } from './dto/update-sol-credentials.dto.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { Tenant } from '../../common/decorators/tenant.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
+import { SkipTenant } from '../../common/decorators/skip-tenant.decorator.js';
 import type { RequestUser } from '../../common/interfaces/index.js';
 
 @ApiTags('Companies')
@@ -29,6 +30,7 @@ export class CompaniesController {
   ) {}
 
   @Post()
+  @SkipTenant()
   @ApiOperation({ summary: 'Create a new company (tenant)' })
   @ApiResponse({ status: 201, description: 'Company created' })
   async create(
@@ -40,6 +42,7 @@ export class CompaniesController {
   }
 
   @Get()
+  @SkipTenant()
   @ApiOperation({ summary: 'List companies the current user belongs to' })
   async findAll(@CurrentUser() user: RequestUser) {
     const companies = await this.companiesService.findByUser(user.userId);
@@ -47,6 +50,7 @@ export class CompaniesController {
   }
 
   @Get(':id')
+  @SkipTenant()
   @ApiOperation({ summary: 'Get company details' })
   async findOne(
     @CurrentUser() user: RequestUser,

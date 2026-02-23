@@ -4,8 +4,12 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { join } from 'node:path';
-import PdfPrinter from 'pdfmake';
+import { createRequire } from 'node:module';
 import type { TDocumentDefinitions, TFontDictionary } from 'pdfmake/interfaces.js';
+
+// pdfmake doesn't have proper ESM exports — use CJS require for the printer class
+const require = createRequire(import.meta.url);
+const PdfPrinter = require('pdfmake/js/printer.js').default;
 import type { PdfInvoiceData } from './interfaces/pdf-data.interface.js';
 import { buildA4Template } from './templates/invoice-a4.template.js';
 import { buildTicketTemplate } from './templates/invoice-ticket.template.js';
@@ -32,7 +36,7 @@ import { buildTicketTemplate } from './templates/invoice-ticket.template.js';
 @Injectable()
 export class PdfGeneratorService {
   private readonly logger = new Logger(PdfGeneratorService.name);
-  private readonly printer: PdfPrinter;
+  private readonly printer: any;
 
   constructor() {
     // Resolve font paths relative to the project root (process.cwd()).

@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@
 import { Reflector } from '@nestjs/core';
 import { ClsService } from 'nestjs-cls';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator.js';
+import { SKIP_TENANT_KEY } from '../decorators/skip-tenant.decorator.js';
 
 @Injectable()
 export class TenantGuard implements CanActivate {
@@ -16,6 +17,12 @@ export class TenantGuard implements CanActivate {
       context.getClass(),
     ]);
     if (isPublic) return true;
+
+    const skipTenant = this.reflector.getAllAndOverride<boolean>(SKIP_TENANT_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (skipTenant) return true;
 
     const request = context.switchToHttp().getRequest();
     const companyId = request.user?.companyId;

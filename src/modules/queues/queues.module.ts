@@ -26,6 +26,9 @@ import { SunatClientModule } from '../sunat-client/sunat-client.module.js';
 import { CdrProcessorModule } from '../cdr-processor/cdr-processor.module.js';
 import { CertificatesModule } from '../certificates/certificates.module.js';
 import { CompaniesModule } from '../companies/companies.module.js';
+import { PdfGeneratorModule } from '../pdf-generator/pdf-generator.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
+import { WebhooksModule } from '../webhooks/webhooks.module.js';
 
 /**
  * QueuesModule — Registers BullMQ queues and their processor workers.
@@ -111,6 +114,9 @@ import { CompaniesModule } from '../companies/companies.module.js';
     CdrProcessorModule,
     CertificatesModule,
     CompaniesModule,
+    PdfGeneratorModule,
+    NotificationsModule,
+    WebhooksModule,
   ],
   providers: [
     InvoiceSendProcessor,

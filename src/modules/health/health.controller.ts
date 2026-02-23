@@ -5,6 +5,7 @@ import {
   MemoryHealthIndicator,
   DiskHealthIndicator,
 } from '@nestjs/terminus';
+import { platform } from 'node:os';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { PrismaHealthIndicator } from './indicators/prisma.health-indicator.js';
 import { RedisHealthIndicator } from './indicators/redis.health-indicator.js';
@@ -23,6 +24,8 @@ export class HealthController {
   @Public()
   @HealthCheck()
   check() {
+    const diskPath = platform() === 'win32' ? 'C:\\' : '/';
+
     return this.health.check([
       () => this.prismaHealth.isHealthy('database'),
       () => this.redisHealth.isHealthy('redis'),
@@ -30,7 +33,7 @@ export class HealthController {
       () =>
         this.disk.checkStorage('disk', {
           thresholdPercent: 0.9,
-          path: '/',
+          path: diskPath,
         }),
     ]);
   }

@@ -4,6 +4,10 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { XmlBuilderService } from '../xml-builder/xml-builder.service.js';
 import { XmlSignerService } from '../xml-signer/xml-signer.service.js';
@@ -11,6 +15,8 @@ import { SunatClientService } from '../sunat-client/sunat-client.service.js';
 import { CdrProcessorService } from '../cdr-processor/cdr-processor.service.js';
 import { CertificatesService } from '../certificates/certificates.service.js';
 import { CompaniesService } from '../companies/companies.service.js';
+import { PdfGeneratorService } from '../pdf-generator/pdf-generator.service.js';
+import type { PdfInvoiceData, PdfInvoiceItem } from '../pdf-generator/interfaces/pdf-data.interface.js';
 import { XmlValidatorService } from '../xml-builder/validators/xml-validator.js';
 import { createZipFromXml } from '../../common/utils/zip.js';
 import {
@@ -20,6 +26,7 @@ import {
 } from '../../common/utils/tax-calculator.js';
 import { amountToWords } from '../../common/utils/amount-to-words.js';
 import { TIPO_DOCUMENTO } from '../../common/constants/index.js';
+import { QUEUE_INVOICE_SEND } from '../queues/queues.constants.js';
 import type {
   XmlInvoiceData,
   XmlCreditNoteData,
@@ -52,6 +59,8 @@ export class InvoicesService {
     private readonly certificates: CertificatesService,
     private readonly companies: CompaniesService,
     private readonly xmlValidator: XmlValidatorService,
+    private readonly pdfGenerator: PdfGeneratorService,
+    @InjectQueue(QUEUE_INVOICE_SEND) private readonly invoiceSendQueue: Queue,
   ) {}
 
   /**
@@ -293,7 +302,7 @@ export class InvoicesService {
         descuentoGlobal: totals.descuentoGlobal,
         totalVenta: totals.totalVenta,
         formaPago,
-        cuotas: dto.cuotas ?? undefined,
+        cuotas: (dto.cuotas as any) ?? undefined,
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -301,7 +310,7 @@ export class InvoicesService {
         sunatCode,
         sunatMessage,
         sunatNotes: sunatNotes ?? undefined,
-        cdrZip: cdrZip ?? undefined,
+        cdrZip: cdrZip ? new Uint8Array(cdrZip) : undefined,
         sentAt: status !== 'PENDING' ? new Date() : undefined,
         attempts: status !== 'PENDING' ? 1 : 0,
         lastAttemptAt: new Date(),
@@ -505,7 +514,7 @@ export class InvoicesService {
         sunatCode,
         sunatMessage,
         sunatNotes: sunatNotes ?? undefined,
-        cdrZip: cdrZip ?? undefined,
+        cdrZip: cdrZip ? new Uint8Array(cdrZip) : undefined,
         sentAt: status !== 'PENDING' ? new Date() : undefined,
         attempts: status !== 'PENDING' ? 1 : 0,
         lastAttemptAt: new Date(),
@@ -705,7 +714,7 @@ export class InvoicesService {
         sunatCode,
         sunatMessage,
         sunatNotes: sunatNotes ?? undefined,
-        cdrZip: cdrZip ?? undefined,
+        cdrZip: cdrZip ? new Uint8Array(cdrZip) : undefined,
         sentAt: status !== 'PENDING' ? new Date() : undefined,
         attempts: status !== 'PENDING' ? 1 : 0,
         lastAttemptAt: new Date(),
@@ -852,6 +861,107 @@ export class InvoicesService {
   }
 
   /**
+   * Get or generate the PDF for an invoice.
+   * Reads from disk if already generated, otherwise generates on-the-fly.
+   */
+  async getPdf(
+    companyId: string,
+    invoiceId: string,
+    format: 'a4' | 'ticket' = 'a4',
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const invoice = await this.prisma.client.invoice.findFirst({
+      where: { id: invoiceId, companyId },
+      include: { items: true, company: true },
+    });
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    // Try reading from disk if already generated
+    if (invoice.pdfUrl) {
+      try {
+        const fullPath = join(process.cwd(), invoice.pdfUrl);
+        const buffer = await readFile(fullPath);
+        const filename = invoice.pdfUrl.split('/').pop()!;
+        return { buffer, filename };
+      } catch {
+        // File missing on disk — regenerate below
+        this.logger.warn(`PDF file missing at ${invoice.pdfUrl}, regenerating`);
+      }
+    }
+
+    // Generate on-the-fly
+    const company = invoice.company;
+    const TIPO_DOC_NOMBRES: Record<string, string> = {
+      '01': 'FACTURA ELECTRÓNICA',
+      '03': 'BOLETA DE VENTA ELECTRÓNICA',
+      '07': 'NOTA DE CRÉDITO ELECTRÓNICA',
+      '08': 'NOTA DE DÉBITO ELECTRÓNICA',
+    };
+    const CURRENCY_SYMBOLS: Record<string, string> = {
+      PEN: 'S/',
+      USD: 'US$',
+      EUR: '€',
+    };
+
+    const pdfData: PdfInvoiceData = {
+      companyRuc: company.ruc,
+      companyRazonSocial: company.razonSocial,
+      companyDireccion: company.direccion,
+      companyUbigeo: company.ubigeo,
+      tipoDoc: invoice.tipoDoc,
+      tipoDocNombre: TIPO_DOC_NOMBRES[invoice.tipoDoc] ?? 'COMPROBANTE ELECTRÓNICO',
+      serie: invoice.serie,
+      correlativo: invoice.correlativo,
+      fechaEmision: invoice.fechaEmision.toISOString().split('T')[0]!,
+      fechaVencimiento: invoice.fechaVencimiento
+        ? invoice.fechaVencimiento.toISOString().split('T')[0]!
+        : undefined,
+      moneda: invoice.moneda,
+      monedaSimbolo: CURRENCY_SYMBOLS[invoice.moneda] ?? invoice.moneda,
+      clienteTipoDoc: invoice.clienteTipoDoc,
+      clienteNumDoc: invoice.clienteNumDoc,
+      clienteNombre: invoice.clienteNombre,
+      clienteDireccion: invoice.clienteDireccion ?? undefined,
+      items: invoice.items.map((item, idx): PdfInvoiceItem => ({
+        numero: idx + 1,
+        cantidad: Number(item.cantidad),
+        unidadMedida: item.unidadMedida,
+        descripcion: item.descripcion,
+        valorUnitario: Number(item.valorUnitario),
+        igv: Number(item.igv),
+        valorVenta: Number(item.valorVenta),
+      })),
+      opGravadas: Number(invoice.opGravadas),
+      opExoneradas: Number(invoice.opExoneradas),
+      opInafectas: Number(invoice.opInafectas),
+      igv: Number(invoice.igv),
+      isc: Number(invoice.isc),
+      icbper: Number(invoice.icbper),
+      totalVenta: Number(invoice.totalVenta),
+      montoEnLetras: amountToWords(Number(invoice.totalVenta), invoice.moneda),
+      xmlHash: invoice.xmlHash ?? undefined,
+      sunatCode: invoice.sunatCode ?? undefined,
+      sunatMessage: invoice.sunatMessage ?? undefined,
+      formaPago: invoice.formaPago,
+      motivoNota: invoice.motivoNota ?? undefined,
+      docRefSerie: invoice.docRefSerie ?? undefined,
+      docRefCorrelativo: invoice.docRefCorrelativo ?? undefined,
+    };
+
+    const buffer =
+      format === 'ticket'
+        ? await this.pdfGenerator.generateTicket(pdfData)
+        : await this.pdfGenerator.generateA4(pdfData);
+
+    const correlativoPadded = String(invoice.correlativo).padStart(8, '0');
+    const filename = `${invoice.serie}-${correlativoPadded}.pdf`;
+
+    return { buffer, filename };
+  }
+
+  /**
    * Create, sign, and send a Resumen Diario (RC) to SUNAT.
    *
    * Summary documents are sent asynchronously — SUNAT returns a ticket
@@ -871,16 +981,10 @@ export class InvoicesService {
     const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
     const moneda = dto.moneda ?? 'PEN';
 
-    // Get next correlativo for RC
+    // Get next correlativo for RC (atomic)
     const dateStr = fechaEmision.replace(/-/g, '');
     const rcSerieKey = `RC-${dateStr}`;
-    const nextCorrelativo = (company.nextCorrelativo as Record<string, number>) ?? {};
-    const correlativo = (nextCorrelativo[rcSerieKey] ?? 0) + 1;
-    nextCorrelativo[rcSerieKey] = correlativo;
-    await this.prisma.client.company.update({
-      where: { id: companyId },
-      data: { nextCorrelativo },
-    });
+    const correlativo = await this.atomicIncrementCorrelativo(companyId, rcSerieKey);
 
     // Build summary lines
     const summaryLines: XmlSummaryLine[] = dto.items.map((item) => ({
@@ -984,16 +1088,10 @@ export class InvoicesService {
     const solCreds = await this.companies.getSolCredentials(companyId);
     const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
 
-    // Get next correlativo for RA
+    // Get next correlativo for RA (atomic)
     const dateStr = fechaEmision.replace(/-/g, '');
     const raSerieKey = `RA-${dateStr}`;
-    const nextCorrelativo = (company.nextCorrelativo as Record<string, number>) ?? {};
-    const correlativo = (nextCorrelativo[raSerieKey] ?? 0) + 1;
-    nextCorrelativo[raSerieKey] = correlativo;
-    await this.prisma.client.company.update({
-      where: { id: companyId },
-      data: { nextCorrelativo },
-    });
+    const correlativo = await this.atomicIncrementCorrelativo(companyId, raSerieKey);
 
     // Build voided lines
     const voidedLines: XmlVoidedLine[] = dto.items.map((item) => ({
@@ -1063,10 +1161,58 @@ export class InvoicesService {
     return { ticket, id: voidedId, status, sunatMessage };
   }
 
+  /**
+   * Resend a failed/rejected invoice to SUNAT.
+   * Only allowed for REJECTED or DRAFT status.
+   */
+  async resend(
+    companyId: string,
+    invoiceId: string,
+  ): Promise<InvoiceResponseDto> {
+    const invoice = await this.prisma.client.invoice.findFirst({
+      where: { id: invoiceId, companyId },
+    });
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    if (invoice.status !== 'REJECTED' && invoice.status !== 'DRAFT') {
+      throw new BadRequestException(
+        `Cannot resend invoice with status "${invoice.status}". Only REJECTED or DRAFT invoices can be resent.`,
+      );
+    }
+
+    // Reset status and queue for re-send
+    const updated = await this.prisma.client.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: 'QUEUED',
+        lastError: null,
+      },
+    });
+
+    await this.invoiceSendQueue.add(
+      'resend',
+      { invoiceId, companyId },
+      { jobId: `resend-${invoiceId}-${Date.now()}` },
+    );
+
+    this.logger.log(
+      `Invoice ${invoice.serie}-${invoice.correlativo} queued for resend (attempt=${invoice.attempts + 1})`,
+    );
+
+    return this.toResponseDto(updated);
+  }
+
   // ─── Private Helpers ────────────────────────────────────────────────
 
   /**
    * Get next correlativo for a given series, atomically incrementing the counter.
+   *
+   * Uses a single atomic SQL UPDATE with jsonb_set + COALESCE to prevent
+   * race conditions when multiple requests hit the same series concurrently.
+   * The increment happens entirely within PostgreSQL, so no read-then-write gap.
    */
   private async getNextCorrelativo(
     companyId: string,
@@ -1085,17 +1231,41 @@ export class InvoicesService {
       serie = 'F001';
     }
 
-    const nextCorrelativo = (company.nextCorrelativo as Record<string, number>) ?? {};
-    const correlativo = (nextCorrelativo[serie] ?? 0) + 1;
-
-    // Update atomically
-    nextCorrelativo[serie] = correlativo;
-    await this.prisma.client.company.update({
-      where: { id: companyId },
-      data: { nextCorrelativo },
-    });
-
+    const correlativo = await this.atomicIncrementCorrelativo(companyId, serie);
     return { serie, correlativo };
+  }
+
+  /**
+   * Atomically increment a correlativo counter in the company's next_correlativo JSON.
+   *
+   * Single SQL statement: no read-then-write race condition possible.
+   * Uses PostgreSQL jsonb_set + COALESCE to handle missing keys safely.
+   */
+  private async atomicIncrementCorrelativo(
+    companyId: string,
+    serieKey: string,
+  ): Promise<number> {
+    const result: Array<{ next_correlativo: Record<string, number> }> =
+      await this.prisma.client.$queryRawUnsafe(
+        `UPDATE companies
+         SET next_correlativo = jsonb_set(
+           COALESCE(next_correlativo, '{}'::jsonb),
+           $2::text[],
+           to_jsonb(COALESCE((next_correlativo->>$3)::int, 0) + 1)
+         ),
+         updated_at = NOW()
+         WHERE id = $1
+         RETURNING next_correlativo`,
+        companyId,
+        `{${serieKey}}`,
+        serieKey,
+      );
+
+    if (!result[0]) {
+      throw new NotFoundException(`Company ${companyId} not found`);
+    }
+
+    return result[0].next_correlativo[serieKey]!;
   }
 
   private buildXmlCompany(company: any): XmlCompany {

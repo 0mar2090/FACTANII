@@ -103,13 +103,34 @@ async function bootstrap() {
   const port = configService.get<number>('app.port', 3000);
   await app.listen(port, '0.0.0.0');
 
-  // Graceful shutdown
+  // Enable NestJS shutdown hooks so onModuleDestroy/onApplicationShutdown fire
+  app.enableShutdownHooks();
+
+  // Graceful shutdown — drain BullMQ workers before closing
   const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
   for (const signal of signals) {
     process.on(signal, async () => {
       console.log(`Received ${signal}, shutting down gracefully...`);
-      await app.close();
-      process.exit(0);
+      console.log('Waiting for in-progress BullMQ jobs to complete...');
+
+      // Set a hard deadline so we don't hang indefinitely
+      const forceExitTimeout = setTimeout(() => {
+        console.error('Forced exit after 30s shutdown timeout');
+        process.exit(1);
+      }, 30_000);
+      forceExitTimeout.unref();
+
+      try {
+        // app.close() triggers NestJS shutdown hooks which close BullMQ workers.
+        // BullMQ WorkerHost.onModuleDestroy calls worker.close() which waits
+        // for running jobs to finish before resolving.
+        await app.close();
+        console.log('Graceful shutdown complete');
+        process.exit(0);
+      } catch (err) {
+        console.error('Error during shutdown:', err);
+        process.exit(1);
+      }
     });
   }
 

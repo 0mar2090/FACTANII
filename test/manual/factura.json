@@ -1,0 +1,25 @@
+{
+  "fechaEmision": "2026-02-22",
+  "clienteTipoDoc": "6",
+  "clienteNumDoc": "20100066603",
+  "clienteNombre": "CLIENTE DE PRUEBAS SAC",
+  "clienteDireccion": "AV. JAVIER PRADO 1234",
+  "moneda": "PEN",
+  "formaPago": "Contado",
+  "items": [
+    {
+      "cantidad": 2,
+      "unidadMedida": "NIU",
+      "descripcion": "Laptop HP ProBook 450 G8",
+      "valorUnitario": 2500.00,
+      "tipoAfectacion": "10"
+    },
+    {
+      "cantidad": 1,
+      "unidadMedida": "NIU",
+      "descripcion": "Mouse Logitech MX Master 3",
+      "valorUnitario": 250.00,
+      "tipoAfectacion": "10"
+    }
+  ]
+}

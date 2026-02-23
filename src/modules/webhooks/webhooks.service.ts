@@ -1,26 +1,78 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
-import type { WebhookEvent, WebhookPayload } from './dto/webhook.dto.js';
+import { PrismaService } from '../prisma/prisma.service.js';
+import type { WebhookEvent, WebhookPayload, CreateWebhookDto } from './dto/webhook.dto.js';
 
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
 
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Register a webhook endpoint for a company.
+   */
+  async create(companyId: string, dto: CreateWebhookDto) {
+    const webhook = await this.prisma.client.webhook.create({
+      data: {
+        companyId,
+        url: dto.url,
+        events: dto.events,
+        secret: dto.secret,
+      },
+    });
+
+    this.logger.log(
+      `Webhook created: id=${webhook.id} company=${companyId} url=${dto.url} events=[${dto.events.join(', ')}]`,
+    );
+
+    return webhook;
+  }
+
+  /**
+   * List all active webhooks for a company.
+   */
+  async findAll(companyId: string) {
+    return this.prisma.client.webhook.findMany({
+      where: { companyId, isActive: true },
+      select: {
+        id: true,
+        url: true,
+        events: true,
+        isActive: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Deactivate a webhook (soft delete).
+   */
+  async remove(companyId: string, webhookId: string) {
+    const webhook = await this.prisma.client.webhook.findFirst({
+      where: { id: webhookId, companyId },
+    });
+
+    if (!webhook) {
+      throw new NotFoundException('Webhook not found');
+    }
+
+    await this.prisma.client.webhook.update({
+      where: { id: webhookId },
+      data: { isActive: false },
+    });
+
+    this.logger.log(`Webhook deactivated: id=${webhookId} company=${companyId}`);
+  }
+
   /**
    * Send a webhook notification to a URL.
-   *
-   * - POSTs the payload as JSON
-   * - Adds standard headers: Content-Type, X-Webhook-Event, X-Webhook-Timestamp
-   * - If a secret is provided, signs the payload body with HMAC-SHA256
-   *   and adds `X-Webhook-Signature: sha256={hex}`
-   * - Enforces a 10-second timeout via AbortController
-   *
-   * @returns true on 2xx response, false otherwise
    */
   async sendWebhook(
     url: string,
     payload: WebhookPayload,
-    secret?: string,
+    secret?: string | null,
   ): Promise<boolean> {
     const body = JSON.stringify(payload);
     const headers: Record<string, string> = {
@@ -29,7 +81,6 @@ export class WebhooksService {
       'X-Webhook-Timestamp': payload.timestamp,
     };
 
-    // Sign payload with HMAC-SHA256 if a shared secret is provided
     if (secret) {
       const signature = createHmac('sha256', secret)
         .update(body)
@@ -77,10 +128,6 @@ export class WebhooksService {
 
   /**
    * Notify all registered webhooks for a company about an invoice status change.
-   *
-   * Currently a placeholder that logs the event. In a future iteration this will
-   * read webhook endpoint URLs from the database for the given company and
-   * dispatch sendWebhook calls for each one.
    */
   async notifyInvoiceStatus(
     companyId: string,
@@ -101,17 +148,25 @@ export class WebhooksService {
       },
     };
 
+    // Query active webhooks that subscribe to this event
+    const webhooks = await this.prisma.client.webhook.findMany({
+      where: { companyId, isActive: true, events: { has: event } },
+    });
+
+    if (webhooks.length === 0) {
+      this.logger.debug(
+        `No webhooks registered for company=${companyId} event=${event}`,
+      );
+      return;
+    }
+
     this.logger.log(
-      `Webhook event queued: company=${companyId} event=${event} ` +
+      `Dispatching ${webhooks.length} webhook(s): company=${companyId} event=${event} ` +
         `invoice=${payload.data.serie}-${payload.data.correlativo}`,
     );
 
-    // TODO: Read webhook URLs from database for this company and dispatch
-    // const webhooks = await this.prisma.webhook.findMany({
-    //   where: { companyId, isActive: true, events: { has: event } },
-    // });
-    // await Promise.allSettled(
-    //   webhooks.map((wh) => this.sendWebhook(wh.url, payload, wh.secret)),
-    // );
+    await Promise.allSettled(
+      webhooks.map((wh) => this.sendWebhook(wh.url, payload, wh.secret)),
+    );
   }
 }

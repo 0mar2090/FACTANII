@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as soap from 'soap';
+import axios from 'axios';
 import { SUNAT_ENDPOINTS } from '../../common/constants/index.js';
 import type {
   SunatSendResult,
@@ -275,26 +276,39 @@ export class SunatClientService {
   /**
    * Create and configure a node-soap SOAP client with WS-Security.
    *
-   * The SUNAT SOAP username is the concatenation of the RUC and SOL user
-   * (e.g., "20000000001MODDATOS"), with no separator.
+   * Uses static local WSDL files to avoid SUNAT WAF issues during WSDL download.
+   * Provides a custom axios instance to node-soap that strips User-Agent headers,
+   * which SUNAT's WAF blocks with 401 responses.
    */
   private async createSoapClient(
     wsdlUrl: string,
     soapUser: string,
     soapPass: string,
   ): Promise<soap.Client> {
-    const client = await soap.createClientAsync(wsdlUrl, {
-      // Timeout for the initial WSDL download
-      wsdl_options: {
-        timeout: 30_000, // 30 seconds
-      },
+    const { join } = await import('node:path');
+
+    // Static local WSDL files — avoids all SUNAT WAF issues with WSDL fetching.
+    // SUNAT's WAF returns 401 for HTTP requests with User-Agent headers on
+    // sub-WSDL/XSD URLs. Using bundled files eliminates this entirely.
+    const wsdlPath = join(process.cwd(), 'src', 'modules', 'sunat-client', 'wsdl', 'main.wsdl');
+
+    // node-soap 1.7.1 uses axios internally for SOAP HTTP requests.
+    // SUNAT WAF blocks 'User-Agent: node-soap/x.x.x' with 401.
+    // Provide a custom axios instance that forces an empty User-Agent on all requests.
+    const sunatAxios = axios.create({ timeout: 30_000 });
+    sunatAxios.interceptors.request.use((config) => {
+      config.headers.set('User-Agent', '');
+      return config;
     });
 
-    // Set WS-Security authentication
-    // Username = {RUC}{SOLUser} (concatenated, no separator)
+    const client = await soap.createClientAsync(wsdlPath, {
+      request: sunatAxios,
+    } as any);
+
+    // WS-Security: username = {RUC}{SOLUser} (e.g. "20000000001MODDATOS")
     client.setSecurity(new soap.WSSecurity(soapUser, soapPass));
 
-    // Ensure the service endpoint points to the actual service URL (without ?wsdl)
+    // Override endpoint to the actual SUNAT service URL (strip ?wsdl)
     const serviceUrl = wsdlUrl.replace('?wsdl', '');
     client.setEndpoint(serviceUrl);
 

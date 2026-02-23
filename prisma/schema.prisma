@@ -93,6 +93,7 @@ model Company {
   invoices     Invoice[]
   apiKeys      ApiKey[]
   subscription Subscription?
+  webhooks     Webhook[]
 
   @@map("companies")
 }
@@ -242,6 +243,24 @@ model InvoiceItem {
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@map("invoice_items")
+}
+
+// ═══════════════════════════════════════
+// WEBHOOKS
+// ═══════════════════════════════════════
+
+model Webhook {
+  id        String   @id @default(cuid())
+  companyId String   @map("company_id")
+  url       String
+  events    String[] // ["invoice.accepted", "invoice.rejected"]
+  secret    String?  // HMAC secret for signing
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("webhooks")
 }
 
 // ═══════════════════════════════════════

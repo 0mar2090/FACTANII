@@ -4,6 +4,7 @@ import {
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
 import { ValidationPipe } from '@nestjs/common';
+import multipart from '@fastify/multipart';
 import { AppModule } from '../src/app.module.js';
 
 /**
@@ -12,6 +13,7 @@ import { AppModule } from '../src/app.module.js';
  * Mirrors the configuration in main.ts:
  * - Global validation pipe (whitelist, transform, forbidNonWhitelisted)
  * - Global prefix 'api/v1'
+ * - Fastify multipart plugin (for file uploads)
  *
  * Usage in E2E tests:
  *   const app = await createTestApp();
@@ -26,6 +28,9 @@ export async function createTestApp(): Promise<NestFastifyApplication> {
   const app = moduleFixture.createNestApplication<NestFastifyApplication>(
     new FastifyAdapter(),
   );
+
+  // Register Fastify plugins (mirrors main.ts)
+  await app.register(multipart, { limits: { fileSize: 5_242_880 } });
 
   app.useGlobalPipes(
     new ValidationPipe({

@@ -126,6 +126,21 @@ export class InvoicesController {
       .send(xml);
   }
 
+  @Get(':id/pdf')
+  async getPdf(
+    @Tenant() companyId: string,
+    @Param('id') id: string,
+    @Query('format') format: string | undefined,
+    @Res() reply: FastifyReply,
+  ) {
+    const pdfFormat = format === 'ticket' ? 'ticket' as const : 'a4' as const;
+    const { buffer, filename } = await this.invoicesService.getPdf(companyId, id, pdfFormat);
+    reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', `attachment; filename="${filename}"`)
+      .send(buffer);
+  }
+
   @Get(':id/cdr')
   async getCdr(
     @Tenant() companyId: string,
@@ -144,10 +159,7 @@ export class InvoicesController {
     @Tenant() companyId: string,
     @Param('id') id: string,
   ) {
-    // TODO: Implement resend logic (Fase 4 with BullMQ queues)
-    return {
-      success: false,
-      error: { code: 'NOT_IMPLEMENTED', message: 'Resend will be available in Fase 4 with BullMQ queues' },
-    };
+    const result = await this.invoicesService.resend(companyId, id);
+    return { success: true, data: result };
   }
 }

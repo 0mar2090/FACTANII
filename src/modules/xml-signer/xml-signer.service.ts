@@ -55,7 +55,10 @@ export class XmlSignerService {
     // itself from the digest calculation to avoid circular references.
     sig.addReference({
       xpath: '/*',
-      transforms: ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
+      transforms: [
+        'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+        'http://www.w3.org/2001/10/xml-exc-c14n#',
+      ],
       digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
       uri: '',
       isEmptyUri: true,

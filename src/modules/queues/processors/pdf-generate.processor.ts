@@ -1,28 +1,28 @@
-// ═══════════════════════════════════════════════════════════════════
-// PDF Generate Processor — Generates PDF representations of invoices
-// ═══════════════════════════════════════════════════════════════════
-
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Job } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { PdfGeneratorService } from '../../pdf-generator/pdf-generator.service.js';
+import type { PdfInvoiceData, PdfInvoiceItem } from '../../pdf-generator/interfaces/pdf-data.interface.js';
+import { amountToWords } from '../../../common/utils/amount-to-words.js';
 import { QUEUE_PDF_GENERATE } from '../queues.constants.js';
 import type { PdfGenerateJobData } from '../interfaces/index.js';
 
-/**
- * BullMQ processor for generating PDF representations of invoices.
- *
- * Pipeline:
- * 1. Load invoice with items from database
- * 2. Load company data for header/footer
- * 3. Generate PDF via PdfGeneratorService (A4 or ticket format)
- * 4. Store PDF and update pdfUrl on the invoice record
- *
- * Retries are handled by BullMQ (3 attempts).
- *
- * NOTE: PdfGeneratorService is being built in parallel.
- * Once available, uncomment the import and inject it via constructor.
- */
+const TIPO_DOC_NOMBRES: Record<string, string> = {
+  '01': 'FACTURA ELECTRÓNICA',
+  '03': 'BOLETA DE VENTA ELECTRÓNICA',
+  '07': 'NOTA DE CRÉDITO ELECTRÓNICA',
+  '08': 'NOTA DE DÉBITO ELECTRÓNICA',
+};
+
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  PEN: 'S/',
+  USD: 'US$',
+  EUR: '€',
+};
+
 @Processor(QUEUE_PDF_GENERATE, {
   concurrency: 5,
 })
@@ -31,8 +31,7 @@ export class PdfGenerateProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
-    // TODO: Inject PdfGeneratorService once the pdf-generator module is ready
-    // private readonly pdfGenerator: PdfGeneratorService,
+    private readonly pdfGenerator: PdfGeneratorService,
   ) {
     super();
   }
@@ -66,34 +65,77 @@ export class PdfGenerateProcessor extends WorkerHost {
       throw new Error(`Company ${companyId} not found`);
     }
 
-    // 3. Generate PDF
-    // TODO: Replace with actual PdfGeneratorService call once available:
-    //
-    // let pdfBuffer: Buffer;
-    // if (format === 'ticket') {
-    //   pdfBuffer = await this.pdfGenerator.generateTicket(invoice, company);
-    // } else {
-    //   pdfBuffer = await this.pdfGenerator.generateA4(invoice, company);
-    // }
-    //
-    // For now, log a placeholder message.
-    this.logger.warn(
-      `PdfGeneratorService not yet available — skipping PDF generation for invoice ${invoiceId}`,
-    );
+    // 3. Map to PdfInvoiceData
+    const pdfData: PdfInvoiceData = {
+      companyRuc: company.ruc,
+      companyRazonSocial: company.razonSocial,
+      companyDireccion: company.direccion,
+      companyUbigeo: company.ubigeo,
+      tipoDoc: invoice.tipoDoc,
+      tipoDocNombre: TIPO_DOC_NOMBRES[invoice.tipoDoc] ?? 'COMPROBANTE ELECTRÓNICO',
+      serie: invoice.serie,
+      correlativo: invoice.correlativo,
+      fechaEmision: invoice.fechaEmision.toISOString().split('T')[0]!,
+      fechaVencimiento: invoice.fechaVencimiento
+        ? invoice.fechaVencimiento.toISOString().split('T')[0]!
+        : undefined,
+      moneda: invoice.moneda,
+      monedaSimbolo: CURRENCY_SYMBOLS[invoice.moneda] ?? invoice.moneda,
+      clienteTipoDoc: invoice.clienteTipoDoc,
+      clienteNumDoc: invoice.clienteNumDoc,
+      clienteNombre: invoice.clienteNombre,
+      clienteDireccion: invoice.clienteDireccion ?? undefined,
+      items: invoice.items.map((item, idx): PdfInvoiceItem => ({
+        numero: idx + 1,
+        cantidad: Number(item.cantidad),
+        unidadMedida: item.unidadMedida,
+        descripcion: item.descripcion,
+        valorUnitario: Number(item.valorUnitario),
+        igv: Number(item.igv),
+        valorVenta: Number(item.valorVenta),
+      })),
+      opGravadas: Number(invoice.opGravadas),
+      opExoneradas: Number(invoice.opExoneradas),
+      opInafectas: Number(invoice.opInafectas),
+      igv: Number(invoice.igv),
+      isc: Number(invoice.isc),
+      icbper: Number(invoice.icbper),
+      totalVenta: Number(invoice.totalVenta),
+      montoEnLetras: amountToWords(Number(invoice.totalVenta), invoice.moneda),
+      xmlHash: invoice.xmlHash ?? undefined,
+      sunatCode: invoice.sunatCode ?? undefined,
+      sunatMessage: invoice.sunatMessage ?? undefined,
+      formaPago: invoice.formaPago,
+      motivoNota: invoice.motivoNota ?? undefined,
+      docRefSerie: invoice.docRefSerie ?? undefined,
+      docRefCorrelativo: invoice.docRefCorrelativo ?? undefined,
+    };
 
-    // 4. Store PDF and update invoice
-    // TODO: Once PDF is generated, store it (local file, S3, etc.) and update the record:
-    //
-    // const pdfPath = `pdfs/${company.ruc}/${invoice.serie}-${invoice.correlativo}.pdf`;
-    // await storePdfBuffer(pdfBuffer, pdfPath); // Storage implementation TBD
-    //
-    // await this.prisma.client.invoice.update({
-    //   where: { id: invoiceId },
-    //   data: { pdfUrl: pdfPath },
-    // });
-    //
-    // this.logger.log(
-    //   `PDF generated for invoice ${invoice.serie}-${invoice.correlativo}: ${pdfPath}`,
-    // );
+    // 4. Generate PDF
+    let pdfBuffer: Buffer;
+    if (format === 'ticket') {
+      pdfBuffer = await this.pdfGenerator.generateTicket(pdfData);
+    } else {
+      pdfBuffer = await this.pdfGenerator.generateA4(pdfData);
+    }
+
+    // 5. Store to local storage/pdfs/ directory
+    const correlativoPadded = String(invoice.correlativo).padStart(8, '0');
+    const pdfDir = join(process.cwd(), 'storage', 'pdfs', company.ruc);
+    await mkdir(pdfDir, { recursive: true });
+    const pdfFileName = `${invoice.serie}-${correlativoPadded}.pdf`;
+    const pdfPath = join(pdfDir, pdfFileName);
+    await writeFile(pdfPath, pdfBuffer);
+
+    // 6. Update invoice.pdfUrl in DB
+    const pdfUrl = `storage/pdfs/${company.ruc}/${pdfFileName}`;
+    await this.prisma.client.invoice.update({
+      where: { id: invoiceId },
+      data: { pdfUrl },
+    });
+
+    this.logger.log(
+      `PDF generated for invoice ${invoice.serie}-${correlativoPadded}: ${pdfUrl} (${pdfBuffer.length} bytes)`,
+    );
   }
 }

@@ -1,4 +1,4 @@
-import * as forge from 'node-forge';
+import forge from 'node-forge';
 
 /**
  * Represents the key pair and certificate extracted from a PFX file.
