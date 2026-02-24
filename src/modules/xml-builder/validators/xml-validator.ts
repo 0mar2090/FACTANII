@@ -18,6 +18,8 @@ import {
   MAX_DAYS_TO_SEND,
   MAX_DAYS_BY_DOC_TYPE,
   CODIGO_DETRACCION,
+  DETRACCION_THRESHOLD,
+  DETRACCION_THRESHOLD_TRANSPORT,
 } from '../../../common/constants/index.js';
 import { round2, calculateItemTaxes, calculateInvoiceTotals } from '../../../common/utils/tax-calculator.js';
 import type { CreateInvoiceDto } from '../../invoices/dto/create-invoice.dto.js';
@@ -182,6 +184,75 @@ export class XmlValidatorService {
           field: 'codigoDetraccion',
           message: `Invalid detracción code. Must be a valid SUNAT catalog 54 code`,
         });
+      }
+    }
+
+    // --- Deep validations (SUNAT Feb 2026) ---
+
+    // Compute totals from items for cross-checks
+    const deepItemResults = (dto.items || []).map(item => calculateItemTaxes({
+      cantidad: item.cantidad ?? 0,
+      valorUnitario: item.valorUnitario ?? 0,
+      tipoAfectacion: item.tipoAfectacion ?? '10',
+      descuento: item.descuento,
+      isc: item.isc,
+      cantidadBolsasPlastico: item.cantidadBolsasPlastico,
+    }));
+    const deepTiposAfectacion = (dto.items || []).map(i => i.tipoAfectacion ?? '10');
+    const deepTotals = calculateInvoiceTotals({
+      items: deepItemResults,
+      tiposAfectacion: deepTiposAfectacion,
+      descuentoGlobal: dto.descuentoGlobal,
+      otrosCargos: dto.otrosCargos,
+    });
+
+    // Product code validation (OBS-3496): if codigoSunat provided, must be 8-digit numeric, not 00000000/99999999
+    for (let idx = 0; idx < (dto.items || []).length; idx++) {
+      const item = dto.items[idx]!;
+      if (item.codigoSunat) {
+        if (!/^\d{8}$/.test(item.codigoSunat)) {
+          errors.push({
+            field: `items[${idx}].codigoSunat`,
+            message: `codigoSunat debe ser numérico de 8 dígitos, recibido: ${item.codigoSunat}`,
+          });
+        } else if (item.codigoSunat === '00000000' || item.codigoSunat === '99999999') {
+          errors.push({
+            field: `items[${idx}].codigoSunat`,
+            message: `codigoSunat no puede ser 00000000 ni 99999999`,
+          });
+        }
+      }
+    }
+
+    // Detracción threshold: totalVenta must meet minimum (S/700 general, S/400 transport code 027)
+    if (dto.codigoDetraccion) {
+      const threshold = dto.codigoDetraccion === '027' ? DETRACCION_THRESHOLD_TRANSPORT : DETRACCION_THRESHOLD;
+      if (deepTotals.totalVenta < threshold) {
+        errors.push({
+          field: 'totalVenta',
+          message: `Factura con detracción requiere monto mínimo de S/${threshold} (umbral SUNAT). Total actual: S/${deepTotals.totalVenta}`,
+        });
+      }
+    }
+
+    // Anticipos validation
+    if (dto.anticipos && dto.anticipos.length > 0) {
+      const sumAnticipos = dto.anticipos.reduce((acc: number, a) => acc + (a.monto || 0), 0);
+      if (sumAnticipos > deepTotals.totalVenta) {
+        errors.push({
+          field: 'anticipos',
+          message: `Suma de anticipos (${sumAnticipos}) excede el total de venta (${deepTotals.totalVenta})`,
+        });
+      }
+      const invoiceMoneda = dto.moneda ?? 'PEN';
+      for (let idx = 0; idx < dto.anticipos.length; idx++) {
+        const anticipo = dto.anticipos[idx]!;
+        if (anticipo.moneda && anticipo.moneda !== invoiceMoneda) {
+          errors.push({
+            field: `anticipos[${idx}].moneda`,
+            message: `Anticipo moneda (${anticipo.moneda}) debe coincidir con moneda de factura (${invoiceMoneda})`,
+          });
+        }
       }
     }
 
