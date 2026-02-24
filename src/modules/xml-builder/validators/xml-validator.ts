@@ -762,6 +762,20 @@ export class XmlValidatorService {
       });
     }
 
+    // fechaReferencia must not be in the future and must be within 7 days of today (Peru time)
+    const diffDays = daysBetweenInPeru(dto.fechaReferencia);
+    if (diffDays < 0) {
+      errors.push({
+        field: 'fechaReferencia',
+        message: 'Reference date (fechaReferencia) cannot be in the future',
+      });
+    } else if (diffDays > 7) {
+      errors.push({
+        field: 'fechaReferencia',
+        message: `Reference date (fechaReferencia) exceeds the 7-day window. It is ${diffDays} days ago.`,
+      });
+    }
+
     // Validate each summary line
     if (dto.items) {
       for (let i = 0; i < dto.items.length; i++) {

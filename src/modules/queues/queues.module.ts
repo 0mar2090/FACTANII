@@ -81,10 +81,10 @@ import { WebhooksModule } from '../webhooks/webhooks.module.js';
           attempts: 3,
           backoff: {
             type: 'exponential',
-            delay: 1000,
+            delay: 3000,
           },
-          removeOnComplete: { count: 1000 },
-          removeOnFail: { count: 5000 },
+          removeOnComplete: { count: 500 },
+          removeOnFail: { count: 2000 },
         },
       },
       {
