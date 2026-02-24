@@ -134,7 +134,7 @@ export class InvoicesService {
     }
 
     const { calculatedItems, totals, xmlItems } = this.calculateItemsAndTotals(
-      dto.items, dto.descuentoGlobal, dto.otrosCargos,
+      dto.items, dto.descuentoGlobal, dto.otrosCargos, dto.tasaIGV,
     );
 
     // Detracción auto-calculation and rate enforcement
@@ -386,7 +386,9 @@ export class InvoicesService {
       serieName,
     );
 
-    const { calculatedItems, totals, xmlItems } = this.calculateItemsAndTotals(dto.items);
+    const { calculatedItems, totals, xmlItems } = this.calculateItemsAndTotals(
+      dto.items, 0, 0, dto.tasaIGV,
+    );
 
     // Create invoice record with DRAFT status immediately to preserve correlativo
     const invoice = await this.prisma.client.invoice.create({
@@ -535,7 +537,9 @@ export class InvoicesService {
       serieName,
     );
 
-    const { calculatedItems, totals, xmlItems } = this.calculateItemsAndTotals(dto.items);
+    const { calculatedItems, totals, xmlItems } = this.calculateItemsAndTotals(
+      dto.items, 0, 0, dto.tasaIGV,
+    );
 
     // Create invoice record with DRAFT status immediately to preserve correlativo
     const invoice = await this.prisma.client.invoice.create({
@@ -1882,6 +1886,7 @@ export class InvoicesService {
     items: InvoiceItemDto[],
     descuentoGlobal = 0,
     otrosCargos = 0,
+    tasaIGV?: number,
   ) {
     const calculatedItems = items.map((item) => {
       const tipoAfectacion = item.tipoAfectacion ?? '10';
@@ -1893,6 +1898,7 @@ export class InvoicesService {
           descuento: item.descuento,
           isc: item.isc,
           cantidadBolsasPlastico: item.cantidadBolsasPlastico,
+          tasaIGV,
         }),
         tipoAfectacion,
         dto: item,

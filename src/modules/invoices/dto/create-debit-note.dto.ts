@@ -2,6 +2,7 @@ import {
   IsString,
   IsOptional,
   IsArray,
+  IsNumber,
   ValidateNested,
   IsDateString,
   IsInt,
@@ -83,4 +84,9 @@ export class CreateDebitNoteDto {
   @ValidateNested({ each: true })
   @Type(() => InvoiceItemDto)
   items: InvoiceItemDto[];
+
+  /** Override IGV rate (e.g. 0.105 for MYPE Ley 32357). Defaults to 0.18. */
+  @IsNumber()
+  @IsOptional()
+  tasaIGV?: number;
 }

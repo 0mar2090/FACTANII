@@ -103,6 +103,8 @@ export interface ItemCalcInput {
   /** ISC fixed amount per unit (for tipoSistemaISC '02') */
   montoFijoISC?: number;
   cantidadBolsasPlastico?: number; // para ICBPER
+  /** Override IGV rate (e.g. 0.105 for MYPE Ley 32357). Defaults to IGV_RATE (0.18). */
+  tasaIGV?: number;
 }
 
 export interface ItemCalcResult {
@@ -157,7 +159,7 @@ export function calculateItemTaxes(input: ItemCalcInput): ItemCalcResult {
   let precioUnitario = round4(valorUnitario);
 
   if (isGravado(tipoAfectacion)) {
-    const rate = isIvap(tipoAfectacion) ? IVAP_RATE : IGV_RATE;
+    const rate = isIvap(tipoAfectacion) ? IVAP_RATE : (input.tasaIGV ?? IGV_RATE);
     igv = round2(baseImponible * rate);
     precioUnitario = round4(valorUnitario * (1 + rate));
   }

@@ -160,6 +160,11 @@ export class CreateInvoiceDto {
   @IsNumber()
   @IsOptional()
   otrosCargos?: number;
+
+  /** Override IGV rate (e.g. 0.105 for MYPE Ley 32357). Defaults to 0.18. */
+  @IsNumber()
+  @IsOptional()
+  tasaIGV?: number;
 }
 
 export class AnticipoItemDto {

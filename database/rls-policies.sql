@@ -83,6 +83,45 @@ CREATE POLICY tenant_keys_insert ON api_keys
   FOR INSERT TO app_user
   WITH CHECK (company_id = current_setting('tenancy.tenant_id', true));
 
+CREATE POLICY tenant_keys_delete ON api_keys
+  FOR DELETE TO app_user
+  USING (company_id = current_setting('tenancy.tenant_id', true));
+
+-- ═══════════════════════════════════════════════
+-- Tablas adicionales con RLS
+-- ═══════════════════════════════════════════════
+
+ALTER TABLE webhooks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+
+-- Policies para webhooks
+CREATE POLICY tenant_webhooks_select ON webhooks
+  FOR SELECT TO app_user
+  USING (company_id = current_setting('tenancy.tenant_id', true));
+
+CREATE POLICY tenant_webhooks_insert ON webhooks
+  FOR INSERT TO app_user
+  WITH CHECK (company_id = current_setting('tenancy.tenant_id', true));
+
+CREATE POLICY tenant_webhooks_update ON webhooks
+  FOR UPDATE TO app_user
+  USING (company_id = current_setting('tenancy.tenant_id', true))
+  WITH CHECK (company_id = current_setting('tenancy.tenant_id', true));
+
+CREATE POLICY tenant_webhooks_delete ON webhooks
+  FOR DELETE TO app_user
+  USING (company_id = current_setting('tenancy.tenant_id', true));
+
+-- Policies para subscriptions
+CREATE POLICY tenant_subs_select ON subscriptions
+  FOR SELECT TO app_user
+  USING (company_id = current_setting('tenancy.tenant_id', true));
+
+CREATE POLICY tenant_subs_update ON subscriptions
+  FOR UPDATE TO app_user
+  USING (company_id = current_setting('tenancy.tenant_id', true))
+  WITH CHECK (company_id = current_setting('tenancy.tenant_id', true));
+
 -- NOTA: El superuser (postgres) NO es afectado por RLS.
 -- Prisma migrations usa superuser, así que las migraciones funcionan normal.
 -- Para desarrollo, si Prisma se conecta como superuser, RLS no filtra.
