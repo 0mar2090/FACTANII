@@ -36,7 +36,7 @@ import {
   TIPO_DOC_NOMBRES,
   CURRENCY_SYMBOLS,
 } from '../../common/constants/index.js';
-import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL } from '../queues/queues.constants.js';
+import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL, QUEUE_PDF_GENERATE, QUEUE_EMAIL_SEND } from '../queues/queues.constants.js';
 import type {
   XmlInvoiceData,
   XmlCreditNoteData,
@@ -88,6 +88,8 @@ export class InvoicesService {
     private readonly billing: BillingService,
     @InjectQueue(QUEUE_INVOICE_SEND) private readonly invoiceSendQueue: Queue,
     @InjectQueue(QUEUE_TICKET_POLL) private readonly ticketPollQueue: Queue,
+    @InjectQueue(QUEUE_PDF_GENERATE) private readonly pdfQueue: Queue,
+    @InjectQueue(QUEUE_EMAIL_SEND) private readonly emailQueue: Queue,
   ) {}
 
   /**
@@ -346,6 +348,9 @@ export class InvoicesService {
     // Increment billing quota counter (fire-and-forget)
     void this.billing.incrementInvoiceCount(companyId);
 
+    // Queue PDF generation and email notification (fire-and-forget)
+    void this.queuePostSendJobs(updatedInvoice, companyId, status);
+
     return this.toResponseDto(updatedInvoice);
   }
 
@@ -388,6 +393,15 @@ export class InvoicesService {
 
     const { calculatedItems, totals, xmlItems } = this.calculateItemsAndTotals(
       dto.items, 0, 0, dto.tasaIGV,
+    );
+
+    // Validate NC total does not exceed original invoice total
+    await this.validateCreditNoteTotalAgainstOriginal(
+      companyId,
+      dto.docRefTipo,
+      dto.docRefSerie,
+      dto.docRefCorrelativo,
+      totals.totalVenta,
     );
 
     // Create invoice record with DRAFT status immediately to preserve correlativo
@@ -497,6 +511,7 @@ export class InvoicesService {
     this.logger.log(`Credit Note created: ${serie}-${correlativo} status=${status}`);
 
     void this.billing.incrementInvoiceCount(companyId);
+    void this.queuePostSendJobs(updatedInvoice, companyId, status);
 
     return this.toResponseDto(updatedInvoice);
   }
@@ -648,6 +663,7 @@ export class InvoicesService {
     this.logger.log(`Debit Note created: ${serie}-${correlativo} status=${status}`);
 
     void this.billing.incrementInvoiceCount(companyId);
+    void this.queuePostSendJobs(updatedInvoice, companyId, status);
 
     return this.toResponseDto(updatedInvoice);
   }
@@ -1261,6 +1277,7 @@ export class InvoicesService {
 
     this.logger.log(`Retention created: ${serie}-${correlativo} status=${status}`);
     void this.billing.incrementInvoiceCount(companyId);
+    void this.queuePostSendJobs(updatedInvoice, companyId, status);
     return this.toResponseDto(updatedInvoice);
   }
 
@@ -1370,6 +1387,7 @@ export class InvoicesService {
 
     this.logger.log(`Perception created: ${serie}-${correlativo} status=${status}`);
     void this.billing.incrementInvoiceCount(companyId);
+    void this.queuePostSendJobs(updatedInvoice, companyId, status);
     return this.toResponseDto(updatedInvoice);
   }
 
@@ -1548,6 +1566,7 @@ export class InvoicesService {
 
     this.logger.log(`Guide created: ${serie}-${correlativo} status=${status}`);
     void this.billing.incrementInvoiceCount(companyId);
+    void this.queuePostSendJobs(updatedInvoice, companyId, status);
     return this.toResponseDto(updatedInvoice);
   }
 
@@ -1807,6 +1826,43 @@ export class InvoicesService {
     }
   }
 
+  /**
+   * Validate that a credit note total does not exceed the original invoice total.
+   * If the original document is not found, log a warning but don't block
+   * (the original may have been issued in another system).
+   */
+  private async validateCreditNoteTotalAgainstOriginal(
+    companyId: string,
+    docRefTipo: string,
+    docRefSerie: string,
+    docRefCorrelativo: number,
+    ncTotalVenta: number,
+  ): Promise<void> {
+    const originalDoc = await this.prisma.client.invoice.findFirst({
+      where: {
+        companyId,
+        tipoDoc: docRefTipo,
+        serie: docRefSerie,
+        correlativo: docRefCorrelativo,
+      },
+      select: { totalVenta: true },
+    });
+
+    if (!originalDoc) {
+      this.logger.warn(
+        `NC validation: original document ${docRefTipo}-${docRefSerie}-${docRefCorrelativo} not found in DB, skipping total validation`,
+      );
+      return;
+    }
+
+    const originalTotal = Number(originalDoc.totalVenta);
+    if (ncTotalVenta > originalTotal) {
+      throw new BadRequestException(
+        `Nota de Crédito total (${ncTotalVenta}) excede el total del documento original (${originalTotal})`,
+      );
+    }
+  }
+
   private async prepareDocumentContext(companyId: string, skipQuota = false) {
     if (!skipQuota) await this.enforceQuota(companyId);
 
@@ -1877,6 +1933,69 @@ export class InvoicesService {
     }
 
     return { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, zipBuffer, zipFileName };
+  }
+
+  /**
+   * Queue PDF generation and email notification after a synchronous send.
+   *
+   * Called after signAndSendSoap when the invoice status is ACCEPTED or OBSERVED
+   * and the client has an email address. This mirrors the post-send pipeline
+   * in InvoiceSendProcessor.triggerPostSendPipeline for the async BullMQ path.
+   */
+  private async queuePostSendJobs(
+    invoice: { id: string; tipoDoc: string; serie: string; correlativo: number; clienteEmail: string | null; xmlContent: string | null },
+    companyId: string,
+    status: string,
+  ): Promise<void> {
+    // Only proceed for accepted/observed invoices
+    if (status !== 'ACCEPTED' && status !== 'OBSERVED') {
+      return;
+    }
+
+    // 1. Queue PDF generation
+    try {
+      await this.pdfQueue.add(
+        'post-send-pdf',
+        { invoiceId: invoice.id, companyId, format: 'a4' },
+        { jobId: `pdf-${invoice.id}-${Date.now()}` },
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to queue PDF generation for ${invoice.id}: ${msg}`);
+    }
+
+    // 2. Queue email if client has an email address
+    if (invoice.clienteEmail) {
+      try {
+        const correlativoPadded = String(invoice.correlativo).padStart(8, '0');
+        const docNumber = `${invoice.serie}-${correlativoPadded}`;
+        const docTypeName = TIPO_DOC_NOMBRES[invoice.tipoDoc] ?? invoice.tipoDoc;
+
+        await this.emailQueue.add(
+          'invoice-notification',
+          {
+            to: invoice.clienteEmail,
+            subject: `${docTypeName} ${docNumber}`,
+            body: `<p>Estimado cliente,</p><p>Su comprobante electrónico <strong>${docTypeName} ${docNumber}</strong> ha sido aceptado por SUNAT.</p><p>Adjuntamos el XML del documento. El PDF será enviado en breve.</p>`,
+            attachments: invoice.xmlContent
+              ? [
+                  {
+                    filename: `${docNumber}.xml`,
+                    content: Buffer.from(invoice.xmlContent).toString('base64'),
+                    contentType: 'application/xml',
+                  },
+                ]
+              : undefined,
+          },
+          { jobId: `email-${invoice.id}-${Date.now()}` },
+        );
+
+        this.logger.log(`Queued email notification for ${docNumber} to ${invoice.clienteEmail}`);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Failed to queue email notification for ${invoice.id}: ${msg}`);
+      }
+    }
   }
 
   /**
