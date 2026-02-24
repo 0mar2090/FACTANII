@@ -51,6 +51,15 @@ export const QUEUE_SUMMARY_SEND = 'summary-send' as const;
 export const QUEUE_TICKET_POLL = 'ticket-poll' as const;
 
 /**
+ * Queue name for permanently failed jobs (Dead Letter Queue).
+ *
+ * - Jobs are moved here after all retry attempts are exhausted
+ * - No automatic processing — used for manual review and alerting
+ * - removeOnComplete disabled to preserve all DLQ entries
+ */
+export const QUEUE_DLQ = 'dead-letter-queue' as const;
+
+/**
  * All queue names as an array, useful for bulk operations.
  */
 export const ALL_QUEUES = [
@@ -59,6 +68,7 @@ export const ALL_QUEUES = [
   QUEUE_EMAIL_SEND,
   QUEUE_SUMMARY_SEND,
   QUEUE_TICKET_POLL,
+  QUEUE_DLQ,
 ] as const;
 
 export type QueueName = (typeof ALL_QUEUES)[number];

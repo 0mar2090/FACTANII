@@ -617,14 +617,27 @@ export class XmlValidatorService {
       });
     }
 
-    // NC/ND items in a summary require document reference
+    // Validate each summary line
     if (dto.items) {
       for (let i = 0; i < dto.items.length; i++) {
         const item = dto.items[i]!;
+
+        // NC/ND items require document reference
         if ((item.tipoDoc === '07' || item.tipoDoc === '08') && !item.docRefTipo) {
           errors.push({
             field: `items[${i}].docRefTipo`,
             message: 'NC/ND items in a summary require a document reference (docRefTipo)',
+          });
+        }
+
+        // totalVenta consistency: opGravadas + opExoneradas + opInafectas + igv + isc + icbper + otrosCargos ≈ totalVenta (±1 tolerance)
+        const expectedTotal =
+          item.opGravadas + item.opExoneradas + item.opInafectas +
+          item.igv + (item.isc ?? 0) + (item.icbper ?? 0) + (item.otrosCargos ?? 0);
+        if (Math.abs(expectedTotal - item.totalVenta) > 1) {
+          errors.push({
+            field: `items[${i}].totalVenta`,
+            message: `Total venta (${item.totalVenta}) does not match calculated total (${expectedTotal.toFixed(2)}). Difference exceeds ±1 tolerance.`,
           });
         }
       }

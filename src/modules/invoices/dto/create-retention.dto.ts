@@ -3,6 +3,7 @@ import {
   IsOptional,
   IsArray,
   ValidateNested,
+  ValidateIf,
   IsDateString,
   IsInt,
   IsNumber,
@@ -14,9 +15,9 @@ import {
 import { Type } from 'class-transformer';
 
 export class RetentionItemDto {
-  /** Tipo doc del comprobante relacionado (Cat 01): solo facturas (01) y boletas (03) */
+  /** Tipo doc del comprobante relacionado (Cat 01): facturas, boletas, NC, ND */
   @IsString()
-  @IsIn(['01', '03'])
+  @IsIn(['01', '03', '07', '08', '12', '13'])
   tipoDocRelacionado: string;
 
   /** Serie del comprobante relacionado */
@@ -46,9 +47,10 @@ export class RetentionItemDto {
   @IsOptional()
   moneda?: string;
 
-  /** Tipo de cambio (solo si moneda != PEN) */
-  @IsNumber()
-  @IsOptional()
+  /** Tipo de cambio — requerido si moneda != PEN */
+  @ValidateIf((o) => o.moneda && o.moneda !== 'PEN')
+  @IsNumber({}, { message: 'tipoCambio is required when moneda is not PEN' })
+  @Min(0.001)
   tipoCambio?: number;
 }
 

@@ -32,6 +32,9 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 // Feature modules — Fase 5
 import { HealthModule } from './modules/health/health.module.js';
 
+// Shared infrastructure
+import { RedisModule } from './modules/redis/redis.module.js';
+
 // Global guards
 import { TenantThrottlerGuard } from './common/guards/tenant-throttler.guard.js';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard.js';
@@ -65,12 +68,27 @@ import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor.js
       },
     }),
 
-    // Rate limiting
-    ThrottlerModule.forRoot([
-      { name: 'short', ttl: 1000, limit: 3 },
-      { name: 'medium', ttl: 10_000, limit: 20 },
-      { name: 'long', ttl: 60_000, limit: 100 },
-    ]),
+    // Rate limiting (configurable via RATE_LIMIT_* env vars)
+    ThrottlerModule.forRootAsync({
+      useFactory: (config: ConfigService) => ([
+        {
+          name: 'short',
+          ttl: config.get<number>('app.rateLimit.shortTtl', 1000),
+          limit: config.get<number>('app.rateLimit.shortLimit', 3),
+        },
+        {
+          name: 'medium',
+          ttl: config.get<number>('app.rateLimit.mediumTtl', 10_000),
+          limit: config.get<number>('app.rateLimit.mediumLimit', 20),
+        },
+        {
+          name: 'long',
+          ttl: config.get<number>('app.rateLimit.longTtl', 60_000),
+          limit: config.get<number>('app.rateLimit.longLimit', 100),
+        },
+      ]),
+      inject: [ConfigService],
+    }),
 
     // BullMQ queues
     BullModule.forRootAsync({
@@ -83,6 +101,9 @@ import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor.js
       }),
       inject: [ConfigService],
     }),
+
+    // Redis — Global shared client for lockout, caching, etc.
+    RedisModule,
 
     // Prisma — Global database access
     PrismaModule,

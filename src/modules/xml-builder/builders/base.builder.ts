@@ -190,7 +190,7 @@ export abstract class BaseXmlBuilder {
 
     address
       .ele('cac:AddressLine')
-        .ele('cbc:Line').txt(company.direccion).up()
+        .ele('cbc:Line').dat(company.direccion).up()
       .up();
 
     address
@@ -241,7 +241,7 @@ export abstract class BaseXmlBuilder {
       legalEntity
         .ele('cac:RegistrationAddress')
           .ele('cac:AddressLine')
-            .ele('cbc:Line').txt(client.direccion).up()
+            .ele('cbc:Line').dat(client.direccion).up()
           .up()
         .up();
     }

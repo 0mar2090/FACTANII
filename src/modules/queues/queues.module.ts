@@ -12,6 +12,7 @@ import {
   QUEUE_EMAIL_SEND,
   QUEUE_SUMMARY_SEND,
   QUEUE_TICKET_POLL,
+  QUEUE_DLQ,
 } from './queues.constants.js';
 
 // Processors
@@ -20,6 +21,7 @@ import { PdfGenerateProcessor } from './processors/pdf-generate.processor.js';
 import { EmailSendProcessor } from './processors/email-send.processor.js';
 import { SummarySendProcessor } from './processors/summary-send.processor.js';
 import { TicketPollProcessor } from './processors/ticket-poll.processor.js';
+import { DlqListener } from './processors/dlq.listener.js';
 
 // Feature modules whose services are injected into processors
 import { XmlBuilderModule } from '../xml-builder/xml-builder.module.js';
@@ -119,6 +121,13 @@ import { WebhooksModule } from '../webhooks/webhooks.module.js';
           removeOnFail: { count: 5000 },
         },
       },
+      {
+        name: QUEUE_DLQ,
+        defaultJobOptions: {
+          removeOnComplete: false, // Preserve all DLQ entries for review
+          removeOnFail: false,
+        },
+      },
     ),
 
     // Feature modules providing services consumed by processors
@@ -138,6 +147,7 @@ import { WebhooksModule } from '../webhooks/webhooks.module.js';
     EmailSendProcessor,
     SummarySendProcessor,
     TicketPollProcessor,
+    DlqListener,
   ],
   // Export BullModule so other modules can inject Queue instances to add jobs
   exports: [BullModule],

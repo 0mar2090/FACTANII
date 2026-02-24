@@ -3,6 +3,7 @@ import {
   IsOptional,
   IsArray,
   ValidateNested,
+  ValidateIf,
   IsDateString,
   IsNumber,
   ArrayMinSize,
@@ -95,8 +96,10 @@ export class CreateInvoiceDto {
   @IsIn(['Contado', 'Credito'])
   formaPago?: string;
 
+  /** Cuotas requeridas cuando formaPago es "Credito" */
+  @ValidateIf((o) => o.formaPago === 'Credito')
   @IsArray()
-  @IsOptional()
+  @ArrayMinSize(1, { message: 'cuotas is required when formaPago is Credito' })
   @ValidateNested({ each: true })
   @Type(() => PaymentInstallmentDto)
   cuotas?: PaymentInstallmentDto[];
