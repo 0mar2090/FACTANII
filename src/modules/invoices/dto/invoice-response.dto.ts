@@ -15,6 +15,15 @@ export interface InvoiceResponseDto {
   sunatNotes?: string[];
   xmlHash?: string;
   createdAt: string;
+  /** Detracción fields */
+  codigoDetraccion?: string;
+  porcentajeDetraccion?: number;
+  montoDetraccion?: number;
+  cuentaDetraccion?: string;
+  /** Anticipos and related documents */
+  anticiposData?: unknown;
+  docsRelacionadosData?: unknown;
+  opExportacion?: number;
 }
 
 /**

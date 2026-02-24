@@ -167,6 +167,24 @@ export class InvoicesService {
       };
     }
 
+    // Anticipos validation
+    if (dto.anticipos && dto.anticipos.length > 0) {
+      const sumAnticipos = round2(dto.anticipos.reduce((acc, a) => acc + a.monto, 0));
+      if (sumAnticipos > totals.totalVenta) {
+        throw new BadRequestException(
+          `Suma de anticipos (${sumAnticipos.toFixed(2)}) excede el total de venta (${totals.totalVenta.toFixed(2)})`,
+        );
+      }
+
+      for (const anticipo of dto.anticipos) {
+        if (anticipo.moneda && anticipo.moneda !== moneda) {
+          throw new BadRequestException(
+            `Moneda del anticipo (${anticipo.moneda}) debe coincidir con la moneda de la factura (${moneda})`,
+          );
+        }
+      }
+    }
+
     // 6. Get next correlativo (atomic)
     const { serie, correlativo } = await this.getNextCorrelativo(
       companyId,
@@ -213,6 +231,9 @@ export class InvoicesService {
         porcentajeDetraccion: detraccion?.porcentaje ?? null,
         montoDetraccion: detraccion?.monto ?? null,
         cuentaDetraccion: detraccion?.cuentaBN ?? null,
+        anticiposData: dto.anticipos ? JSON.parse(JSON.stringify(dto.anticipos)) : null,
+        docsRelacionadosData: dto.documentosRelacionados ? JSON.parse(JSON.stringify(dto.documentosRelacionados)) : null,
+        opExportacion: 0,
         status: 'DRAFT',
         items: {
           create: calculatedItems.map((item) => ({
@@ -1958,6 +1979,13 @@ export class InvoicesService {
       sunatNotes: Array.isArray(invoice.sunatNotes) ? invoice.sunatNotes as string[] : undefined,
       xmlHash: invoice.xmlHash ?? undefined,
       createdAt: invoice.createdAt.toISOString(),
+      codigoDetraccion: invoice.codigoDetraccion ?? undefined,
+      porcentajeDetraccion: invoice.porcentajeDetraccion ? Number(invoice.porcentajeDetraccion) : undefined,
+      montoDetraccion: invoice.montoDetraccion ? Number(invoice.montoDetraccion) : undefined,
+      cuentaDetraccion: invoice.cuentaDetraccion ?? undefined,
+      anticiposData: invoice.anticiposData ?? undefined,
+      docsRelacionadosData: invoice.docsRelacionadosData ?? undefined,
+      opExportacion: Number(invoice.opExportacion),
     };
   }
 }
