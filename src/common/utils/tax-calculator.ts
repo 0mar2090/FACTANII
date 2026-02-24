@@ -1,4 +1,12 @@
-import { IGV_RATE, IVAP_RATE, ICBPER_RATE, TIPO_AFECTACION_IGV } from '../constants/index.js';
+import {
+  IGV_RATE,
+  IVAP_RATE,
+  ICBPER_RATE,
+  TIPO_AFECTACION_IGV,
+  DETRACCION_RATES,
+  DETRACCION_THRESHOLD,
+  DETRACCION_THRESHOLD_TRANSPORT,
+} from '../constants/index.js';
 
 /**
  * Redondear a N decimales usando aritmética de enteros.
@@ -268,4 +276,35 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
     descuentoGlobal: round2(descuentoGlobal),
     totalVenta,
   };
+}
+
+// ─── Detracción Helpers ──────────────────────────────────────────────────
+
+/**
+ * Get the official SUNAT detracción rate for a given commodity/service code.
+ * Returns undefined if the code is not in Catálogo 54.
+ */
+export function getDetraccionRate(codigo: string): number | undefined {
+  return DETRACCION_RATES[codigo];
+}
+
+/**
+ * Calculate the detracción amount based on the official SUNAT rate.
+ * Returns 0 if the code is not recognized.
+ */
+export function calculateDetraccionAmount(codigo: string, totalVenta: number): number {
+  const rate = DETRACCION_RATES[codigo];
+  if (!rate) return 0;
+  return round2(totalVenta * rate);
+}
+
+/**
+ * Check if detracción is required based on the total amount and commodity code.
+ * Uses SUNAT threshold rules:
+ * - Transport (027): >= S/400
+ * - All others: >= S/700
+ */
+export function isDetraccionRequired(totalVenta: number, codigo: string): boolean {
+  const threshold = codigo === '027' ? DETRACCION_THRESHOLD_TRANSPORT : DETRACCION_THRESHOLD;
+  return totalVenta >= threshold;
 }
