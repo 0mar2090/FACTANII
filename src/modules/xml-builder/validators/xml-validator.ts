@@ -22,6 +22,7 @@ import {
   DETRACCION_THRESHOLD_TRANSPORT,
 } from '../../../common/constants/index.js';
 import { round2, calculateItemTaxes, calculateInvoiceTotals } from '../../../common/utils/tax-calculator.js';
+import { peruToday, daysBetweenInPeru } from '../../../common/utils/peru-date.js';
 import type { CreateInvoiceDto } from '../../invoices/dto/create-invoice.dto.js';
 import type { CreateCreditNoteDto } from '../../invoices/dto/create-credit-note.dto.js';
 import type { CreateDebitNoteDto } from '../../invoices/dto/create-debit-note.dto.js';
@@ -440,12 +441,34 @@ export class XmlValidatorService {
         message: 'At least one retention item is required',
       });
     } else {
+      // Retention only applies to Facturas (tipo doc '01')
+      const validRetentionDocTypes = ['01'];
       for (let i = 0; i < dto.items.length; i++) {
         const item = dto.items[i]!;
         if (item.importeTotal <= 0) {
           errors.push({
             field: `items[${i}].importeTotal`,
             message: 'Document amount must be greater than zero',
+          });
+        }
+        // tipoDocRelacionado must be '01' (facturas only for retention)
+        if (!validRetentionDocTypes.includes(item.tipoDocRelacionado)) {
+          errors.push({
+            field: `items[${i}].tipoDocRelacionado`,
+            message: `Retention only applies to Facturas (01). Received: ${item.tipoDocRelacionado}`,
+          });
+        }
+        // Validate date strings
+        if (!this.isValidDateString(item.fechaDoc)) {
+          errors.push({
+            field: `items[${i}].fechaDoc`,
+            message: 'Invalid date format for fechaDoc. Expected YYYY-MM-DD',
+          });
+        }
+        if (!this.isValidDateString(item.fechaPago)) {
+          errors.push({
+            field: `items[${i}].fechaPago`,
+            message: 'Invalid date format for fechaPago. Expected YYYY-MM-DD',
           });
         }
         // tipoCambio is required when moneda is not PEN
@@ -456,6 +479,14 @@ export class XmlValidatorService {
           });
         }
       }
+    }
+
+    // Validate fechaEmision is a valid date string
+    if (!this.isValidDateString(dto.fechaEmision)) {
+      errors.push({
+        field: 'fechaEmision',
+        message: 'Invalid date format for fechaEmision. Expected YYYY-MM-DD',
+      });
     }
 
     this.throwIfErrors(errors);
@@ -496,12 +527,34 @@ export class XmlValidatorService {
         message: 'At least one perception item is required',
       });
     } else {
+      // Perception applies to Facturas (01), Boletas (03), and Liquidación de Compra (12)
+      const validPerceptionDocTypes = ['01', '03', '12'];
       for (let i = 0; i < dto.items.length; i++) {
         const item = dto.items[i]!;
         if (item.importeTotal <= 0) {
           errors.push({
             field: `items[${i}].importeTotal`,
             message: 'Document amount must be greater than zero',
+          });
+        }
+        // tipoDocRelacionado must be '01', '03', or '12'
+        if (!validPerceptionDocTypes.includes(item.tipoDocRelacionado)) {
+          errors.push({
+            field: `items[${i}].tipoDocRelacionado`,
+            message: `Perception applies to Facturas (01), Boletas (03), or Liquidación de Compra (12). Received: ${item.tipoDocRelacionado}`,
+          });
+        }
+        // Validate date strings
+        if (!this.isValidDateString(item.fechaDoc)) {
+          errors.push({
+            field: `items[${i}].fechaDoc`,
+            message: 'Invalid date format for fechaDoc. Expected YYYY-MM-DD',
+          });
+        }
+        if (!this.isValidDateString(item.fechaCobro)) {
+          errors.push({
+            field: `items[${i}].fechaCobro`,
+            message: 'Invalid date format for fechaCobro. Expected YYYY-MM-DD',
           });
         }
         // tipoCambio is required when moneda is not PEN
@@ -512,6 +565,14 @@ export class XmlValidatorService {
           });
         }
       }
+    }
+
+    // Validate fechaEmision is a valid date string
+    if (!this.isValidDateString(dto.fechaEmision)) {
+      errors.push({
+        field: 'fechaEmision',
+        message: 'Invalid date format for fechaEmision. Expected YYYY-MM-DD',
+      });
     }
 
     this.throwIfErrors(errors);
@@ -686,7 +747,7 @@ export class XmlValidatorService {
   validateSummary(dto: CreateSummaryDto): void {
     const errors: ValidationError[] = [];
 
-    const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
+    const fechaEmision = dto.fechaEmision ?? peruToday();
 
     // fechaReferencia must be <= fechaEmision
     const ref = new Date(dto.fechaReferencia);
@@ -743,7 +804,7 @@ export class XmlValidatorService {
   validateVoided(dto: CreateVoidedDto): void {
     const errors: ValidationError[] = [];
 
-    const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
+    const fechaEmision = dto.fechaEmision ?? peruToday();
 
     // fechaReferencia must be <= fechaEmision
     const ref = new Date(dto.fechaReferencia);
@@ -784,21 +845,20 @@ export class XmlValidatorService {
   /**
    * Validate that the emission date is within the allowed SUNAT window.
    *
+   * Uses Peru timezone (America/Lima, UTC-5) for date comparisons to ensure
+   * correct validation regardless of the server's local timezone.
+   *
    * SUNAT allows sending documents within a type-specific window (calendar days)
    * after the emission date. Documents dated in the future are also rejected.
    *
    * @param tipoDoc - Document type code to determine the per-type window
    */
   private validateEmissionDate(fechaEmision: string, errors: ValidationError[], tipoDoc?: string): void {
-    const emissionDate = new Date(fechaEmision);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Calculate calendar-day difference in Peru timezone
+    const diffDays = daysBetweenInPeru(fechaEmision);
 
-    // Cannot emit in the future
-    const emissionDay = new Date(emissionDate);
-    emissionDay.setHours(0, 0, 0, 0);
-
-    if (emissionDay > today) {
+    // Cannot emit in the future (negative diff means future date)
+    if (diffDays < 0) {
       errors.push({
         field: 'fechaEmision',
         message: 'Emission date cannot be in the future',
@@ -808,8 +868,6 @@ export class XmlValidatorService {
 
     // Check max days window (per document type, fallback to general MAX_DAYS_TO_SEND)
     const maxDays = (tipoDoc ? MAX_DAYS_BY_DOC_TYPE[tipoDoc] : undefined) ?? MAX_DAYS_TO_SEND;
-    const diffMs = today.getTime() - emissionDay.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
     if (diffDays > maxDays) {
       errors.push({
@@ -882,6 +940,23 @@ export class XmlValidatorService {
         }
       }
     }
+  }
+
+  /**
+   * Check if a string is a valid date in YYYY-MM-DD format.
+   */
+  private isValidDateString(dateStr: string): boolean {
+    if (!dateStr || typeof dateStr !== 'string') return false;
+    // Must match YYYY-MM-DD pattern
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+    // Must parse to a valid Date
+    const parsed = new Date(dateStr + 'T00:00:00');
+    if (isNaN(parsed.getTime())) return false;
+    // Verify the date components match (rejects e.g. 2026-02-30)
+    const [year, month, day] = dateStr.split('-').map(Number) as [number, number, number];
+    return parsed.getUTCFullYear() === year
+      && parsed.getUTCMonth() + 1 === month
+      && parsed.getUTCDate() === day;
   }
 
   /**

@@ -29,6 +29,7 @@ import {
   calculateDetraccionAmount,
 } from '../../common/utils/tax-calculator.js';
 import { amountToWords } from '../../common/utils/amount-to-words.js';
+import { peruToday } from '../../common/utils/peru-date.js';
 import {
   TIPO_DOCUMENTO,
   RETENCION_RATES,
@@ -901,7 +902,7 @@ export class InvoicesService {
     const { company, cert, ruc, solUser, solPass, xmlCompany } =
       await this.prepareDocumentContext(companyId, true);
 
-    const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
+    const fechaEmision = dto.fechaEmision ?? peruToday();
     const moneda = dto.moneda ?? 'PEN';
 
     // Get next correlativo for RC (atomic)
@@ -1052,7 +1053,7 @@ export class InvoicesService {
     const { company, cert, ruc, solUser, solPass, xmlCompany } =
       await this.prepareDocumentContext(companyId, true);
 
-    const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
+    const fechaEmision = dto.fechaEmision ?? peruToday();
 
     // Get next correlativo for RA (atomic)
     const dateStr = fechaEmision.replace(/-/g, '');
