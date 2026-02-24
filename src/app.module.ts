@@ -31,6 +31,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 
 // Feature modules — Fase 5
 import { HealthModule } from './modules/health/health.module.js';
+import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 
 // Shared infrastructure
 import { RedisModule } from './modules/redis/redis.module.js';
@@ -131,6 +132,7 @@ import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor.js
 
     // === Feature Modules — Fase 5 ===
     HealthModule,
+    DashboardModule,
   ],
   providers: [
     // Guard order: TenantThrottlerGuard → JwtAuthGuard → ApiKeyGuard → TenantGuard → RolesGuard
