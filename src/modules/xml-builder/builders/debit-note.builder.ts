@@ -127,25 +127,10 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
       data.moneda,
       data.opIvap ?? 0,
       data.igvIvap ?? 0,
+      data.opExportacion ?? 0,
     );
 
-    // 13. Debit note lines
-    for (let i = 0; i < data.items.length; i++) {
-      this.addDocumentLine(
-        doc,
-        data.items[i]!,
-        i + 1,
-        data.moneda,
-        'cac:DebitNoteLine',
-        'cbc:DebitedQuantity',
-      );
-    }
-
-    // 14. Line count (MUST come AFTER DebitNoteLine per UBL 2.1 DebitNote XSD)
-    doc.ele('cbc:LineCountNumeric').txt(data.items.length.toString()).up();
-
-    // 15. Legal monetary totals
-    // Note: RequestedMonetaryTotal is used for DebitNote (same structure as LegalMonetaryTotal)
+    // 13. Requested monetary totals (MUST come BEFORE DebitNoteLine per UBL 2.1 XSD)
     this.addRequestedMonetaryTotal(
       doc,
       data.opGravadas,
@@ -157,7 +142,20 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
       data.totalVenta,
       data.moneda,
       data.opIvap ?? 0,
+      data.opExportacion ?? 0,
     );
+
+    // 14. Debit note lines
+    for (let i = 0; i < data.items.length; i++) {
+      this.addDocumentLine(
+        doc,
+        data.items[i]!,
+        i + 1,
+        data.moneda,
+        'cac:DebitNoteLine',
+        'cbc:DebitedQuantity',
+      );
+    }
 
     return this.serializeXml(doc);
   }
@@ -179,8 +177,9 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
     totalVenta: number,
     moneda: string,
     opIvap = 0,
+    opExportacion = 0,
   ): void {
-    const lineExtension = opGravadas + opIvap + opExoneradas + opInafectas;
+    const lineExtension = opGravadas + opIvap + opExoneradas + opInafectas + opExportacion;
 
     const monetaryTotal = parent.ele('cac:RequestedMonetaryTotal');
 

@@ -24,9 +24,9 @@ export class PerceptionBuilder extends BaseXmlBuilder {
     // 1. UBLExtensions
     this.addExtensionContainer(doc);
 
-    // 2. Version IDs (Perception: UBL 2.0, Customization 1.0 per SUNAT CPE schema)
+    // 2. Version IDs (Perception: UBL 2.0, Customization 2.0 per SUNAT CPE schema)
     doc.ele('cbc:UBLVersionID').txt('2.0').up();
-    doc.ele('cbc:CustomizationID').txt('1.0').up();
+    doc.ele('cbc:CustomizationID').txt('2.0').up();
 
     // 3. Signature reference
     this.addSignatureReference(doc, data.company.ruc);

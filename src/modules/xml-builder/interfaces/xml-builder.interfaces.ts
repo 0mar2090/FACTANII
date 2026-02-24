@@ -172,6 +172,8 @@ export interface XmlCreditNoteData {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  /** Export operations (tipoAfectacion '40') — separate TaxScheme 9995 */
+  opExportacion?: number;
   opIvap?: number;
   igv: number;
   igvIvap?: number;
@@ -422,6 +424,8 @@ export interface XmlDebitNoteData {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  /** Export operations (tipoAfectacion '40') — separate TaxScheme 9995 */
+  opExportacion?: number;
   opIvap?: number;
   igv: number;
   igvIvap?: number;

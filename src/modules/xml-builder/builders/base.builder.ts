@@ -712,6 +712,12 @@ export abstract class BaseXmlBuilder {
     // ICBPER subtotal (if applicable)
     if (item.icbper > 0) {
       const icbperSubtotal = taxTotal.ele('cac:TaxSubtotal');
+      // ICBPER TaxableAmount = number of plastic bags (cantidad) per SUNAT rule
+      icbperSubtotal
+        .ele('cbc:TaxableAmount')
+          .att('currencyID', moneda)
+          .txt(this.formatAmount(item.cantidad))
+        .up();
       icbperSubtotal
         .ele('cbc:TaxAmount')
           .att('currencyID', moneda)

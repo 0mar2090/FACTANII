@@ -97,12 +97,12 @@ describe('RetentionBuilder', () => {
     expect(xml).toContain('urn:sunat:names:specification:ubl:peru:schema:xsd:Retention-1');
   });
 
-  it('sets UBLVersionID=2.0 and CustomizationID=1.0', () => {
+  it('sets UBLVersionID=2.0 and CustomizationID=2.0', () => {
     const xml = builder.build(makeRetentionData());
     const parsed = parseXml(xml);
     const doc = parsed.Retention;
     expect(doc.UBLVersionID).toBe('2.0');
-    expect(doc.CustomizationID).toBe('1.0');
+    expect(doc.CustomizationID).toBe('2.0');
   });
 
   it('formats document ID as serie-correlativo padded to 8 digits', () => {
@@ -277,12 +277,12 @@ describe('PerceptionBuilder', () => {
     expect(xml).toContain('urn:sunat:names:specification:ubl:peru:schema:xsd:Perception-1');
   });
 
-  it('sets UBLVersionID=2.0 and CustomizationID=1.0', () => {
+  it('sets UBLVersionID=2.0 and CustomizationID=2.0', () => {
     const xml = builder.build(makePerceptionData());
     const parsed = parseXml(xml);
     const doc = parsed.Perception;
     expect(doc.UBLVersionID).toBe('2.0');
-    expect(doc.CustomizationID).toBe('1.0');
+    expect(doc.CustomizationID).toBe('2.0');
   });
 
   it('formats document ID correctly', () => {

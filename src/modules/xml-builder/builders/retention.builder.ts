@@ -37,9 +37,9 @@ export class RetentionBuilder extends BaseXmlBuilder {
     // 1. UBLExtensions
     this.addExtensionContainer(doc);
 
-    // 2. Version IDs (Retention: UBL 2.0, Customization 1.0 per SUNAT CRE schema)
+    // 2. Version IDs (Retention: UBL 2.0, Customization 2.0 per SUNAT CRE schema)
     doc.ele('cbc:UBLVersionID').txt('2.0').up();
-    doc.ele('cbc:CustomizationID').txt('1.0').up();
+    doc.ele('cbc:CustomizationID').txt('2.0').up();
 
     // 3. Signature reference
     this.addSignatureReference(doc, data.company.ruc);
@@ -232,7 +232,7 @@ export class RetentionBuilder extends BaseXmlBuilder {
     retInfo
       .ele('sac:SUNATNetTotalPaid')
         .att('currencyID', moneda)
-        .txt(this.formatAmount(item.importePagado))
+        .txt(this.formatAmount(item.importePagado - item.importeRetenido))
       .up();
 
     // Exchange rate if foreign currency

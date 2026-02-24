@@ -447,10 +447,10 @@ describe('DebitNoteBuilder — detailed tests', () => {
     expect(xml).toContain('DOSCIENTOS TREINTA Y SEIS');
   });
 
-  it('includes LineCountNumeric', () => {
+  it('does NOT include LineCountNumeric (not in UBL 2.1 DebitNote XSD)', () => {
     const xml = builder.build(makeDebitNoteData());
     const parsed = parseXml(xml);
-    expect(parsed.DebitNote.LineCountNumeric).toBe('1');
+    expect(parsed.DebitNote.LineCountNumeric).toBeUndefined();
   });
 
   // ─── Boleta reference ───

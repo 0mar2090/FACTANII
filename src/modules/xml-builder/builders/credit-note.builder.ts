@@ -121,6 +121,7 @@ export class CreditNoteBuilder extends BaseXmlBuilder {
       data.moneda,
       data.opIvap ?? 0,
       data.igvIvap ?? 0,
+      data.opExportacion ?? 0,
     );
 
     // 13. Legal monetary totals
@@ -137,6 +138,7 @@ export class CreditNoteBuilder extends BaseXmlBuilder {
       data.totalVenta,
       data.moneda,
       data.opIvap ?? 0,
+      data.opExportacion ?? 0,
     );
 
     // 14. Line count
