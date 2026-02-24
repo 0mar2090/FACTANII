@@ -100,10 +100,13 @@ export class InvoiceBuilder extends BaseXmlBuilder {
 
     // 13. Global discount (if applicable)
     if (data.descuentoGlobal > 0) {
+      const discountBase = data.opGravadas + data.opExoneradas + data.opInafectas;
+      const discountFactor = discountBase > 0 ? data.descuentoGlobal / discountBase : 0;
+
       const allowance = doc.ele('cac:AllowanceCharge');
       allowance.ele('cbc:ChargeIndicator').txt('false').up();
       allowance.ele('cbc:AllowanceChargeReasonCode').txt('02').up();
-      allowance.ele('cbc:MultiplierFactorNumeric').txt('1').up();
+      allowance.ele('cbc:MultiplierFactorNumeric').txt(discountFactor.toFixed(5)).up();
       allowance
         .ele('cbc:Amount')
           .att('currencyID', data.moneda)
@@ -112,7 +115,7 @@ export class InvoiceBuilder extends BaseXmlBuilder {
       allowance
         .ele('cbc:BaseAmount')
           .att('currencyID', data.moneda)
-          .txt(this.formatAmount(data.opGravadas + data.opExoneradas + data.opInafectas))
+          .txt(this.formatAmount(discountBase))
         .up();
       allowance.up();
     }

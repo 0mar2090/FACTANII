@@ -14,8 +14,9 @@ import {
 import { Type } from 'class-transformer';
 
 export class PerceptionItemDto {
-  /** Tipo doc del comprobante relacionado (Cat 01) */
+  /** Tipo doc del comprobante relacionado (Cat 01): solo facturas (01) y boletas (03) */
   @IsString()
+  @IsIn(['01', '03'])
   tipoDocRelacionado: string;
 
   /** Serie del comprobante relacionado */

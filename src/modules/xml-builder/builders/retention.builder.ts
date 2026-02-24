@@ -9,7 +9,7 @@ import type {
   XmlRetentionData,
   XmlRetentionLine,
 } from '../interfaces/xml-builder.interfaces.js';
-import { BaseXmlBuilder } from './base.builder.js';
+import { BaseXmlBuilder, type XmlNode } from './base.builder.js';
 
 /**
  * Builds the XML for Comprobante de Retención (tipo 20).
@@ -108,7 +108,7 @@ export class RetentionBuilder extends BaseXmlBuilder {
     return doc;
   }
 
-  private addAgentParty(doc: any, data: XmlRetentionData): void {
+  private addAgentParty(doc: XmlNode, data: XmlRetentionData): void {
     const agent = doc.ele('cac:AgentParty');
 
     agent
@@ -148,7 +148,7 @@ export class RetentionBuilder extends BaseXmlBuilder {
     agent.up();
   }
 
-  private addReceiverParty(doc: any, data: XmlRetentionData): void {
+  private addReceiverParty(doc: XmlNode, data: XmlRetentionData): void {
     const receiver = doc.ele('cac:ReceiverParty');
 
     receiver
@@ -186,7 +186,7 @@ export class RetentionBuilder extends BaseXmlBuilder {
   }
 
   private addRetentionDocumentReference(
-    doc: any,
+    doc: XmlNode,
     item: XmlRetentionLine,
     moneda: string,
   ): void {

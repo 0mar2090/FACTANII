@@ -14,3 +14,14 @@ export interface InvoiceResponseDto {
   xmlHash?: string;
   createdAt: string;
 }
+
+/**
+ * Extended response for async documents (RC, RA) that return a SUNAT ticket.
+ * Includes both the database primary key (id) and the SUNAT document identifier.
+ */
+export interface SummaryResponseDto extends InvoiceResponseDto {
+  /** SUNAT ticket number for polling getStatus */
+  ticket?: string;
+  /** SUNAT document identifier (e.g., "RC-20260223-00001") */
+  sunatDocumentId: string;
+}

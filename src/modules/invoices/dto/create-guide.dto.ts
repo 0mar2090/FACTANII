@@ -67,10 +67,11 @@ export class GuideConductorDto {
   @MaxLength(200)
   apellidos: string;
 
-  /** Número de licencia de conducir (requerido por SUNAT para transporte privado) */
+  /** Número de licencia de conducir (requerido para transporte privado) */
   @IsString()
+  @IsOptional()
   @MaxLength(20)
-  licencia: string;
+  licencia?: string;
 }
 
 export class GuideVehiculoDto {
@@ -149,10 +150,16 @@ export class CreateGuideDto {
   @IsIn(['01', '02'])
   modalidadTransporte: string;
 
-  /** Peso bruto total en KG */
+  /** Peso bruto total */
   @IsNumber()
   @Min(0.001)
   pesoTotal: number;
+
+  /** Unidad de medida del peso (default KGM) */
+  @IsString()
+  @IsOptional()
+  @IsIn(['KGM', 'TNE', 'LBR'])
+  unidadPeso?: string;
 
   /** Número de bultos */
   @IsInt()

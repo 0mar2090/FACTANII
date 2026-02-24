@@ -37,9 +37,7 @@ export class InvoicesController {
     @Tenant() companyId: string,
     @Body() dto: CreateInvoiceDto,
   ) {
-    // Force tipoDoc to "01" for factura endpoint
-    dto.tipoDoc = '01';
-    const result = await this.invoicesService.createInvoice(companyId, dto);
+    const result = await this.invoicesService.createInvoice(companyId, { ...dto, tipoDoc: '01' });
     return { success: true, data: result };
   }
 
@@ -51,9 +49,7 @@ export class InvoicesController {
     @Tenant() companyId: string,
     @Body() dto: CreateInvoiceDto,
   ) {
-    // Force tipoDoc to "03" for boleta endpoint
-    dto.tipoDoc = '03';
-    const result = await this.invoicesService.createInvoice(companyId, dto);
+    const result = await this.invoicesService.createInvoice(companyId, { ...dto, tipoDoc: '03' });
     return { success: true, data: result };
   }
 

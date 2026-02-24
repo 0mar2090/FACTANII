@@ -298,6 +298,13 @@ export class SunatGreClientService {
       || this.configService.get<string>('sunat.greClientSecret')
       || '';
 
+    if (!resolvedClientId) {
+      throw new Error(
+        'SUNAT GRE OAuth2 client ID is required. ' +
+        'Set SUNAT_GRE_CLIENT_ID environment variable or pass clientId parameter.',
+      );
+    }
+
     // OAuth2 password grant
     const tokenUrl = `${endpoints.auth}/${resolvedClientId}/oauth2/token`;
     const params = new URLSearchParams({

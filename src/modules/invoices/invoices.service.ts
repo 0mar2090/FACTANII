@@ -59,7 +59,9 @@ import type { CreateVoidedDto } from './dto/create-voided.dto.js';
 import type { CreateRetentionDto } from './dto/create-retention.dto.js';
 import type { CreatePerceptionDto } from './dto/create-perception.dto.js';
 import type { CreateGuideDto } from './dto/create-guide.dto.js';
-import type { InvoiceResponseDto } from './dto/invoice-response.dto.js';
+import type { InvoiceResponseDto, SummaryResponseDto } from './dto/invoice-response.dto.js';
+import type { CompanyModel } from '../../generated/prisma/models/Company.js';
+import type { InvoiceModel } from '../../generated/prisma/models/Invoice.js';
 
 @Injectable()
 export class InvoicesService {
@@ -101,28 +103,16 @@ export class InvoicesService {
     // 0. Pre-send validation
     this.xmlValidator.validateInvoice(dto);
 
-    // 0.5. Enforce billing quota
-    await this.enforceQuota(companyId);
+    // 1. Load company, certificate, SOL credentials (includes quota enforcement)
+    const { company, cert, ruc, solUser, solPass, xmlCompany } =
+      await this.prepareDocumentContext(companyId);
 
-    // 1. Load company data
-    const company = await this.prisma.client.company.findUnique({
-      where: { id: companyId },
-    });
-    if (!company) {
-      throw new NotFoundException('Company not found');
-    }
-
-    // 2. Get certificate
-    const cert = await this.certificates.getActiveCertificate(companyId);
-
-    // 3. Get SOL credentials
-    const solCreds = await this.companies.getSolCredentials(companyId);
-
-    // 4. Calculate taxes for each item
+    // 2. Calculate taxes for each item
     const tipoDoc = dto.tipoDoc;
     const moneda = dto.moneda ?? 'PEN';
     const tipoOperacion = dto.tipoOperacion ?? '0101';
-    const formaPago = dto.formaPago ?? 'Contado';
+    const formaPago: 'Contado' | 'Credito' =
+      dto.formaPago === 'Credito' ? 'Credito' : 'Contado';
 
     const calculatedItems = dto.items.map((item) => {
       const tipoAfectacion = item.tipoAfectacion ?? '10';
@@ -173,19 +163,6 @@ export class InvoicesService {
     }));
 
     // 8. Build XML
-    const xmlCompany: XmlCompany = {
-      ruc: company.ruc,
-      razonSocial: company.razonSocial,
-      nombreComercial: company.nombreComercial ?? undefined,
-      direccion: company.direccion,
-      ubigeo: company.ubigeo,
-      departamento: company.departamento,
-      provincia: company.provincia,
-      distrito: company.distrito,
-      urbanizacion: company.urbanizacion ?? undefined,
-      codigoPais: company.codigoPais,
-    };
-
     const xmlClient: XmlClient = {
       tipoDocIdentidad: dto.clienteTipoDoc,
       numDocIdentidad: dto.clienteNumDoc,
@@ -215,7 +192,7 @@ export class InvoicesService {
       descuentoGlobal: totals.descuentoGlobal,
       totalVenta: totals.totalVenta,
       formaPago: {
-        formaPago: formaPago as 'Contado' | 'Credito',
+        formaPago,
         cuotas: dto.cuotas?.map((c) => ({
           monto: c.monto,
           moneda: c.moneda ?? moneda,
@@ -227,74 +204,14 @@ export class InvoicesService {
 
     const xmlContent = this.xmlBuilder.buildInvoice(invoiceData);
 
-    // 9. Sign XML
-    const signedXml = this.xmlSigner.sign(
-      xmlContent,
-      cert.pfxBuffer,
-      cert.passphrase,
-    );
-    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
-
-    // 10. Create ZIP
+    // 9. Sign, ZIP, and send to SUNAT
+    const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
     const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
-    const zipFileName = xmlFileName.replace('.xml', '.zip');
-    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
 
-    // 11. Determine SUNAT credentials
-    const ruc = company.isBeta ? '20000000001' : company.ruc;
-    const solUser = company.isBeta ? 'MODDATOS' : (solCreds?.solUser ?? '');
-    const solPass = company.isBeta ? 'moddatos' : (solCreds?.solPass ?? '');
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
+      await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta);
 
-    if (!company.isBeta && (!solUser || !solPass)) {
-      throw new BadRequestException(
-        'SOL credentials are required for production. Configure them first.',
-      );
-    }
-
-    // 12. Send to SUNAT
-    let status = 'SENDING';
-    let sunatCode: string | undefined;
-    let sunatMessage: string | undefined;
-    let sunatNotes: string[] | undefined;
-    let cdrZip: Buffer | undefined;
-
-    try {
-      const result = await this.sunatClient.sendBill(
-        zipBuffer,
-        zipFileName,
-        ruc,
-        solUser,
-        solPass,
-        company.isBeta,
-      );
-
-      if (result.success && result.cdrZip) {
-        // 13. Process CDR
-        const cdr = this.cdrProcessor.processCdr(result.cdrZip);
-        sunatCode = cdr.responseCode;
-        sunatMessage = cdr.description;
-        sunatNotes = cdr.notes;
-        cdrZip = result.cdrZip;
-
-        if (cdr.isAccepted) {
-          status = cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED';
-        } else {
-          status = 'REJECTED';
-        }
-      } else {
-        status = 'REJECTED';
-        sunatCode = result.rawFaultCode ?? result.code;
-        sunatMessage = result.rawFaultString ?? result.message;
-      }
-    } catch (error: any) {
-      this.logger.error(
-        `SUNAT send failed for ${serie}-${correlativo}: ${error.message}`,
-      );
-      status = 'PENDING'; // Will be retried
-      sunatMessage = error.message;
-    }
-
-    // 14. Save to database
+    // 10. Save to database
     const invoice = await this.prisma.client.invoice.create({
       data: {
         companyId,
@@ -323,7 +240,7 @@ export class InvoicesService {
         descuentoGlobal: totals.descuentoGlobal,
         totalVenta: totals.totalVenta,
         formaPago,
-        cuotas: (dto.cuotas as any) ?? undefined,
+        cuotas: dto.cuotas?.map((c) => ({ monto: c.monto, moneda: c.moneda, fechaPago: c.fechaPago })) ?? undefined,
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -375,16 +292,8 @@ export class InvoicesService {
     // 0. Pre-send validation
     this.xmlValidator.validateCreditNote(dto);
 
-    // 0.5. Enforce billing quota
-    await this.enforceQuota(companyId);
-
-    const company = await this.prisma.client.company.findUnique({
-      where: { id: companyId },
-    });
-    if (!company) throw new NotFoundException('Company not found');
-
-    const cert = await this.certificates.getActiveCertificate(companyId);
-    const solCreds = await this.companies.getSolCredentials(companyId);
+    const { company, cert, ruc, solUser, solPass, xmlCompany } =
+      await this.prepareDocumentContext(companyId);
     const moneda = dto.moneda ?? 'PEN';
     const tipoDoc = TIPO_DOCUMENTO.NOTA_CREDITO;
 
@@ -436,7 +345,6 @@ export class InvoicesService {
       descuento: item.calc.descuento,
     }));
 
-    const xmlCompany = this.buildXmlCompany(company);
     const xmlClient: XmlClient = {
       tipoDocIdentidad: dto.clienteTipoDoc,
       numDocIdentidad: dto.clienteNumDoc,
@@ -470,44 +378,10 @@ export class InvoicesService {
 
     const xmlContent = this.xmlBuilder.buildCreditNote(noteData);
     const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
-    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
-
     const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
-    const zipFileName = xmlFileName.replace('.xml', '.zip');
-    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
 
-    const ruc = company.isBeta ? '20000000001' : company.ruc;
-    const solUser = company.isBeta ? 'MODDATOS' : (solCreds?.solUser ?? '');
-    const solPass = company.isBeta ? 'moddatos' : (solCreds?.solPass ?? '');
-
-    let status = 'SENDING';
-    let sunatCode: string | undefined;
-    let sunatMessage: string | undefined;
-    let sunatNotes: string[] | undefined;
-    let cdrZip: Buffer | undefined;
-
-    try {
-      const result = await this.sunatClient.sendBill(
-        zipBuffer, zipFileName, ruc, solUser, solPass, company.isBeta,
-      );
-
-      if (result.success && result.cdrZip) {
-        const cdr = this.cdrProcessor.processCdr(result.cdrZip);
-        sunatCode = cdr.responseCode;
-        sunatMessage = cdr.description;
-        sunatNotes = cdr.notes;
-        cdrZip = result.cdrZip;
-        status = cdr.isAccepted ? (cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED') : 'REJECTED';
-      } else {
-        status = 'REJECTED';
-        sunatCode = result.rawFaultCode ?? result.code;
-        sunatMessage = result.rawFaultString ?? result.message;
-      }
-    } catch (error: any) {
-      this.logger.error(`SUNAT send failed for NC ${serie}-${correlativo}: ${error.message}`);
-      status = 'PENDING';
-      sunatMessage = error.message;
-    }
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
+      await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta);
 
     const invoice = await this.prisma.client.invoice.create({
       data: {
@@ -583,16 +457,8 @@ export class InvoicesService {
     // 0. Pre-send validation
     this.xmlValidator.validateDebitNote(dto);
 
-    // 0.5. Enforce billing quota
-    await this.enforceQuota(companyId);
-
-    const company = await this.prisma.client.company.findUnique({
-      where: { id: companyId },
-    });
-    if (!company) throw new NotFoundException('Company not found');
-
-    const cert = await this.certificates.getActiveCertificate(companyId);
-    const solCreds = await this.companies.getSolCredentials(companyId);
+    const { company, cert, ruc, solUser, solPass, xmlCompany } =
+      await this.prepareDocumentContext(companyId);
     const moneda = dto.moneda ?? 'PEN';
     const tipoDoc = TIPO_DOCUMENTO.NOTA_DEBITO;
 
@@ -643,7 +509,6 @@ export class InvoicesService {
       descuento: item.calc.descuento,
     }));
 
-    const xmlCompany = this.buildXmlCompany(company);
     const xmlClient: XmlClient = {
       tipoDocIdentidad: dto.clienteTipoDoc,
       numDocIdentidad: dto.clienteNumDoc,
@@ -677,44 +542,10 @@ export class InvoicesService {
 
     const xmlContent = this.xmlBuilder.buildDebitNote(noteData);
     const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
-    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
-
     const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
-    const zipFileName = xmlFileName.replace('.xml', '.zip');
-    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
 
-    const ruc = company.isBeta ? '20000000001' : company.ruc;
-    const solUser = company.isBeta ? 'MODDATOS' : (solCreds?.solUser ?? '');
-    const solPass = company.isBeta ? 'moddatos' : (solCreds?.solPass ?? '');
-
-    let status = 'SENDING';
-    let sunatCode: string | undefined;
-    let sunatMessage: string | undefined;
-    let sunatNotes: string[] | undefined;
-    let cdrZip: Buffer | undefined;
-
-    try {
-      const result = await this.sunatClient.sendBill(
-        zipBuffer, zipFileName, ruc, solUser, solPass, company.isBeta,
-      );
-
-      if (result.success && result.cdrZip) {
-        const cdr = this.cdrProcessor.processCdr(result.cdrZip);
-        sunatCode = cdr.responseCode;
-        sunatMessage = cdr.description;
-        sunatNotes = cdr.notes;
-        cdrZip = result.cdrZip;
-        status = cdr.isAccepted ? (cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED') : 'REJECTED';
-      } else {
-        status = 'REJECTED';
-        sunatCode = result.rawFaultCode ?? result.code;
-        sunatMessage = result.rawFaultString ?? result.message;
-      }
-    } catch (error: any) {
-      this.logger.error(`SUNAT send failed for ND ${serie}-${correlativo}: ${error.message}`);
-      status = 'PENDING';
-      sunatMessage = error.message;
-    }
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
+      await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta);
 
     const invoice = await this.prisma.client.invoice.create({
       data: {
@@ -799,7 +630,13 @@ export class InvoicesService {
     const limit = Math.min(filters?.limit ?? 20, 100);
     const skip = (page - 1) * limit;
 
-    const where: any = { companyId };
+    const where: {
+      companyId: string;
+      tipoDoc?: string;
+      status?: string;
+      clienteNumDoc?: string;
+      fechaEmision?: { gte?: Date; lte?: Date };
+    } = { companyId };
     if (filters?.tipoDoc) where.tipoDoc = filters.tipoDoc;
     if (filters?.status) where.status = filters.status;
     if (filters?.clienteNumDoc) where.clienteNumDoc = filters.clienteNumDoc;
@@ -835,7 +672,7 @@ export class InvoicesService {
     ]);
 
     return {
-      data: invoices.map((inv: any) => ({
+      data: invoices.map((inv) => ({
         ...inv,
         totalVenta: Number(inv.totalVenta),
         fechaEmision: inv.fechaEmision.toISOString().split('T')[0],
@@ -1013,14 +850,13 @@ export class InvoicesService {
   async createSummary(
     companyId: string,
     dto: CreateSummaryDto,
-  ): Promise<{ ticket?: string; id: string; status: string; sunatMessage?: string }> {
-    const company = await this.prisma.client.company.findUnique({
-      where: { id: companyId },
-    });
-    if (!company) throw new NotFoundException('Company not found');
+  ): Promise<SummaryResponseDto> {
+    // Pre-send validation
+    this.xmlValidator.validateSummary(dto);
 
-    const cert = await this.certificates.getActiveCertificate(companyId);
-    const solCreds = await this.companies.getSolCredentials(companyId);
+    const { company, cert, ruc, solUser, solPass, xmlCompany } =
+      await this.prepareDocumentContext(companyId, true);
+
     const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
     const moneda = dto.moneda ?? 'PEN';
 
@@ -1052,8 +888,6 @@ export class InvoicesService {
       docRefCorrelativo: item.docRefCorrelativo,
     }));
 
-    const xmlCompany = this.buildXmlCompany(company);
-
     const summaryData: XmlSummaryData = {
       correlativo,
       fechaReferencia: dto.fechaReferencia,
@@ -1073,15 +907,6 @@ export class InvoicesService {
     const xmlFileName = `${company.ruc}-${summaryId}.xml`;
     const zipFileName = xmlFileName.replace('.xml', '.zip');
     const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
-
-    // SUNAT credentials
-    const ruc = company.isBeta ? '20000000001' : company.ruc;
-    const solUser = company.isBeta ? 'MODDATOS' : (solCreds?.solUser ?? '');
-    const solPass = company.isBeta ? 'moddatos' : (solCreds?.solPass ?? '');
-
-    if (!company.isBeta && (!solUser || !solPass)) {
-      throw new BadRequestException('SOL credentials required for production');
-    }
 
     // Persist Invoice record so ticket-poll processor can update it
     const xmlHash = this.xmlSigner.getXmlHash(signedXml);
@@ -1122,14 +947,15 @@ export class InvoicesService {
         status = 'REJECTED';
         sunatMessage = result.message;
       }
-    } catch (error: any) {
-      this.logger.error(`SUNAT sendSummary failed for ${summaryId}: ${error.message}`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`SUNAT sendSummary failed for ${summaryId}: ${msg}`);
       status = 'PENDING';
-      sunatMessage = error.message;
+      sunatMessage = msg;
     }
 
     // Update persisted record with send result
-    await this.prisma.client.invoice.update({
+    const updated = await this.prisma.client.invoice.update({
       where: { id: invoice.id },
       data: { status, sunatMessage },
     });
@@ -1146,10 +972,15 @@ export class InvoicesService {
         solUser,
         solPass,
         isBeta: company.isBeta,
+        documentType: 'summary',
       } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
     }
 
-    return { ticket, id: summaryId, status, sunatMessage };
+    return {
+      ...this.toResponseDto(updated),
+      ticket,
+      sunatDocumentId: summaryId,
+    };
   }
 
   /**
@@ -1161,14 +992,13 @@ export class InvoicesService {
   async createVoided(
     companyId: string,
     dto: CreateVoidedDto,
-  ): Promise<{ ticket?: string; id: string; status: string; sunatMessage?: string }> {
-    const company = await this.prisma.client.company.findUnique({
-      where: { id: companyId },
-    });
-    if (!company) throw new NotFoundException('Company not found');
+  ): Promise<SummaryResponseDto> {
+    // Pre-send validation
+    this.xmlValidator.validateVoided(dto);
 
-    const cert = await this.certificates.getActiveCertificate(companyId);
-    const solCreds = await this.companies.getSolCredentials(companyId);
+    const { company, cert, ruc, solUser, solPass, xmlCompany } =
+      await this.prepareDocumentContext(companyId, true);
+
     const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
 
     // Get next correlativo for RA (atomic)
@@ -1183,8 +1013,6 @@ export class InvoicesService {
       correlativo: item.correlativo,
       motivo: item.motivo,
     }));
-
-    const xmlCompany = this.buildXmlCompany(company);
 
     const voidedData: XmlVoidedData = {
       correlativo,
@@ -1205,15 +1033,6 @@ export class InvoicesService {
     const xmlFileName = `${company.ruc}-${voidedId}.xml`;
     const zipFileName = xmlFileName.replace('.xml', '.zip');
     const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
-
-    // SUNAT credentials
-    const ruc = company.isBeta ? '20000000001' : company.ruc;
-    const solUser = company.isBeta ? 'MODDATOS' : (solCreds?.solUser ?? '');
-    const solPass = company.isBeta ? 'moddatos' : (solCreds?.solPass ?? '');
-
-    if (!company.isBeta && (!solUser || !solPass)) {
-      throw new BadRequestException('SOL credentials required for production');
-    }
 
     // Persist Invoice record so ticket-poll processor can update it
     const xmlHash = this.xmlSigner.getXmlHash(signedXml);
@@ -1254,14 +1073,15 @@ export class InvoicesService {
         status = 'REJECTED';
         sunatMessage = result.message;
       }
-    } catch (error: any) {
-      this.logger.error(`SUNAT sendSummary failed for ${voidedId}: ${error.message}`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`SUNAT sendSummary failed for ${voidedId}: ${msg}`);
       status = 'PENDING';
-      sunatMessage = error.message;
+      sunatMessage = msg;
     }
 
     // Update persisted record with send result
-    await this.prisma.client.invoice.update({
+    const updated = await this.prisma.client.invoice.update({
       where: { id: invoice.id },
       data: { status, sunatMessage },
     });
@@ -1278,10 +1098,15 @@ export class InvoicesService {
         solUser,
         solPass,
         isBeta: company.isBeta,
+        documentType: 'voided',
       } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
     }
 
-    return { ticket, id: voidedId, status, sunatMessage };
+    return {
+      ...this.toResponseDto(updated),
+      ticket,
+      sunatDocumentId: voidedId,
+    };
   }
 
   /**
@@ -1532,7 +1357,7 @@ export class InvoicesService {
       docReferencia: dto.docReferencia,
       modalidadTransporte: dto.modalidadTransporte,
       pesoTotal: dto.pesoTotal,
-      unidadPeso: 'KGM',
+      unidadPeso: dto.unidadPeso ?? 'KGM',
       numeroBultos: dto.numeroBultos,
       puntoPartida: dto.puntoPartida,
       puntoLlegada: dto.puntoLlegada,
@@ -1591,10 +1416,11 @@ export class InvoicesService {
         status = 'REJECTED';
         sunatMessage = sendResult.message;
       }
-    } catch (error: any) {
-      this.logger.error(`SUNAT GRE send failed for ${serie}-${correlativo}: ${error.message}`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`SUNAT GRE send failed for ${serie}-${correlativo}: ${msg}`);
       status = 'PENDING';
-      sunatMessage = error.message;
+      sunatMessage = msg;
     }
 
     const invoice = await this.prisma.client.invoice.create({
@@ -1635,7 +1461,7 @@ export class InvoicesService {
         solPass,
         isBeta: company.isBeta,
         documentType: 'guide',
-      });
+      } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
     }
 
     this.logger.log(`Guide created: ${serie}-${correlativo} status=${status}`);
@@ -1678,6 +1504,12 @@ export class InvoicesService {
       );
     }
 
+    if (!invoice.xmlContent || !invoice.xmlSigned) {
+      throw new BadRequestException(
+        'Cannot resend invoice without signed XML content. The document must be re-created.',
+      );
+    }
+
     // Reset status and queue for re-send
     const updated = await this.prisma.client.invoice.update({
       where: { id: invoiceId },
@@ -1712,7 +1544,7 @@ export class InvoicesService {
   private async getNextCorrelativo(
     companyId: string,
     tipoDoc: string,
-    company: any,
+    company: CompanyModel,
     serieOverride?: string,
   ): Promise<{ serie: string; correlativo: number }> {
     let serie: string;
@@ -1767,8 +1599,8 @@ export class InvoicesService {
    * Common preparation for all document types: load company, cert, SOL creds,
    * resolve beta credentials. Reduces duplication across create methods.
    */
-  private async prepareDocumentContext(companyId: string) {
-    await this.enforceQuota(companyId);
+  private async prepareDocumentContext(companyId: string, skipQuota = false) {
+    if (!skipQuota) await this.enforceQuota(companyId);
 
     const company = await this.prisma.client.company.findUnique({
       where: { id: companyId },
@@ -1829,16 +1661,17 @@ export class InvoicesService {
         sunatCode = result.rawFaultCode ?? result.code;
         sunatMessage = result.rawFaultString ?? result.message;
       }
-    } catch (error: any) {
-      this.logger.error(`SUNAT send failed: ${error.message}`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`SUNAT send failed: ${msg}`);
       status = 'PENDING';
-      sunatMessage = error.message;
+      sunatMessage = msg;
     }
 
     return { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, zipBuffer, zipFileName };
   }
 
-  private buildXmlCompany(company: any): XmlCompany {
+  private buildXmlCompany(company: CompanyModel): XmlCompany {
     return {
       ruc: company.ruc,
       razonSocial: company.razonSocial,
@@ -1862,7 +1695,7 @@ export class InvoicesService {
     }
   }
 
-  private toResponseDto(invoice: any): InvoiceResponseDto {
+  private toResponseDto(invoice: InvoiceModel): InvoiceResponseDto {
     return {
       id: invoice.id,
       tipoDoc: invoice.tipoDoc,

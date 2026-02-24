@@ -16,6 +16,7 @@ import {
   TIPO_MONEDA,
   IGV_RATE,
   MAX_DAYS_TO_SEND,
+  MAX_DAYS_BY_DOC_TYPE,
 } from '../../../common/constants/index.js';
 import { round2 } from '../../../common/utils/tax-calculator.js';
 import type { CreateInvoiceDto } from '../../invoices/dto/create-invoice.dto.js';
@@ -24,6 +25,8 @@ import type { CreateDebitNoteDto } from '../../invoices/dto/create-debit-note.dt
 import type { CreateRetentionDto } from '../../invoices/dto/create-retention.dto.js';
 import type { CreatePerceptionDto } from '../../invoices/dto/create-perception.dto.js';
 import type { CreateGuideDto } from '../../invoices/dto/create-guide.dto.js';
+import type { CreateSummaryDto } from '../../invoices/dto/create-summary.dto.js';
+import type { CreateVoidedDto } from '../../invoices/dto/create-voided.dto.js';
 
 /** A validation error with field and message */
 interface ValidationError {
@@ -118,8 +121,8 @@ export class XmlValidatorService {
       }
     }
 
-    // Validate emission date
-    this.validateEmissionDate(dto.fechaEmision, errors);
+    // Validate emission date (per document type window)
+    this.validateEmissionDate(dto.fechaEmision, errors, tipoDoc);
 
     // Validate currency
     this.validateCurrency(dto.moneda ?? 'PEN', errors);
@@ -176,7 +179,7 @@ export class XmlValidatorService {
     }
 
     // Validate emission date
-    this.validateEmissionDate(dto.fechaEmision, errors);
+    this.validateEmissionDate(dto.fechaEmision, errors, TIPO_DOCUMENTO.NOTA_CREDITO);
 
     // Validate currency
     this.validateCurrency(dto.moneda ?? 'PEN', errors);
@@ -231,7 +234,7 @@ export class XmlValidatorService {
     }
 
     // Validate emission date
-    this.validateEmissionDate(dto.fechaEmision, errors);
+    this.validateEmissionDate(dto.fechaEmision, errors, TIPO_DOCUMENTO.NOTA_DEBITO);
 
     // Validate currency
     this.validateCurrency(dto.moneda ?? 'PEN', errors);
@@ -282,8 +285,8 @@ export class XmlValidatorService {
       });
     }
 
-    // Validate emission date
-    this.validateEmissionDate(dto.fechaEmision, errors);
+    // Validate emission date (CRE: 9-day window)
+    this.validateEmissionDate(dto.fechaEmision, errors, TIPO_DOCUMENTO.RETENCION);
 
     // Validate items
     if (!dto.items || dto.items.length === 0) {
@@ -338,8 +341,8 @@ export class XmlValidatorService {
       });
     }
 
-    // Validate emission date
-    this.validateEmissionDate(dto.fechaEmision, errors);
+    // Validate emission date (CPE: 9-day window)
+    this.validateEmissionDate(dto.fechaEmision, errors, TIPO_DOCUMENTO.PERCEPCION);
 
     // Validate items
     if (!dto.items || dto.items.length === 0) {
@@ -469,8 +472,8 @@ export class XmlValidatorService {
       }
     }
 
-    // Validate emission date
-    this.validateEmissionDate(dto.fechaEmision, errors);
+    // Validate emission date (GRE: 7-day window)
+    this.validateEmissionDate(dto.fechaEmision, errors, TIPO_DOCUMENTO.GUIA_REMISION_REMITENTE);
 
     // SUNAT requires fechaTraslado >= fechaEmision (code 4273)
     if (dto.fechaTraslado && dto.fechaEmision) {
@@ -492,6 +495,117 @@ export class XmlValidatorService {
         field: 'items',
         message: 'At least one item is required',
       });
+    } else {
+      for (let i = 0; i < dto.items.length; i++) {
+        const item = dto.items[i]!;
+        if (item.cantidad <= 0) {
+          errors.push({
+            field: `items[${i}].cantidad`,
+            message: 'Quantity must be greater than zero',
+          });
+        }
+        if (!item.descripcion || item.descripcion.trim().length === 0) {
+          errors.push({
+            field: `items[${i}].descripcion`,
+            message: 'Item description is required',
+          });
+        }
+      }
+    }
+
+    this.throwIfErrors(errors);
+  }
+
+  /**
+   * Validate a Resumen Diario (RC) before XML generation.
+   *
+   * Business rules:
+   * - fechaReferencia must be <= fechaEmision
+   * - fechaReferencia must not be more than 3 days before fechaEmision
+   * - NC/ND lines (07/08) require docReferencia fields
+   *
+   * @throws BadRequestException if validation fails
+   */
+  validateSummary(dto: CreateSummaryDto): void {
+    const errors: ValidationError[] = [];
+
+    const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
+
+    // fechaReferencia must be <= fechaEmision
+    const ref = new Date(dto.fechaReferencia);
+    const emi = new Date(fechaEmision);
+    ref.setHours(0, 0, 0, 0);
+    emi.setHours(0, 0, 0, 0);
+
+    if (ref > emi) {
+      errors.push({
+        field: 'fechaReferencia',
+        message: 'Reference date (fechaReferencia) cannot be after emission date',
+      });
+    }
+
+    // NC/ND items in a summary require document reference
+    if (dto.items) {
+      for (let i = 0; i < dto.items.length; i++) {
+        const item = dto.items[i]!;
+        if ((item.tipoDoc === '07' || item.tipoDoc === '08') && !item.docRefTipo) {
+          errors.push({
+            field: `items[${i}].docRefTipo`,
+            message: 'NC/ND items in a summary require a document reference (docRefTipo)',
+          });
+        }
+      }
+    }
+
+    this.throwIfErrors(errors);
+  }
+
+  /**
+   * Validate a Comunicación de Baja (RA) before XML generation.
+   *
+   * Business rules:
+   * - fechaReferencia must be <= fechaEmision
+   * - Only certain document types can be voided (01, 03, 07, 08)
+   * - motivo (reason) must not be empty
+   *
+   * @throws BadRequestException if validation fails
+   */
+  validateVoided(dto: CreateVoidedDto): void {
+    const errors: ValidationError[] = [];
+
+    const fechaEmision = dto.fechaEmision ?? new Date().toISOString().split('T')[0]!;
+
+    // fechaReferencia must be <= fechaEmision
+    const ref = new Date(dto.fechaReferencia);
+    const emi = new Date(fechaEmision);
+    ref.setHours(0, 0, 0, 0);
+    emi.setHours(0, 0, 0, 0);
+
+    if (ref > emi) {
+      errors.push({
+        field: 'fechaReferencia',
+        message: 'Reference date (fechaReferencia) cannot be after emission date',
+      });
+    }
+
+    // Validate voidable document types and motivo
+    const voidableTypes = ['01', '03', '07', '08'];
+    if (dto.items) {
+      for (let i = 0; i < dto.items.length; i++) {
+        const item = dto.items[i]!;
+        if (!voidableTypes.includes(item.tipoDoc)) {
+          errors.push({
+            field: `items[${i}].tipoDoc`,
+            message: `Document type "${item.tipoDoc}" cannot be voided. Valid types: ${voidableTypes.join(', ')}`,
+          });
+        }
+        if (!item.motivo || item.motivo.trim().length === 0) {
+          errors.push({
+            field: `items[${i}].motivo`,
+            message: 'Void reason (motivo) is required',
+          });
+        }
+      }
     }
 
     this.throwIfErrors(errors);
@@ -500,10 +614,12 @@ export class XmlValidatorService {
   /**
    * Validate that the emission date is within the allowed SUNAT window.
    *
-   * SUNAT allows sending documents up to MAX_DAYS_TO_SEND calendar days
+   * SUNAT allows sending documents within a type-specific window (calendar days)
    * after the emission date. Documents dated in the future are also rejected.
+   *
+   * @param tipoDoc - Document type code to determine the per-type window
    */
-  private validateEmissionDate(fechaEmision: string, errors: ValidationError[]): void {
+  private validateEmissionDate(fechaEmision: string, errors: ValidationError[], tipoDoc?: string): void {
     const emissionDate = new Date(fechaEmision);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -520,14 +636,15 @@ export class XmlValidatorService {
       return;
     }
 
-    // Check max days window
+    // Check max days window (per document type, fallback to general MAX_DAYS_TO_SEND)
+    const maxDays = (tipoDoc ? MAX_DAYS_BY_DOC_TYPE[tipoDoc] : undefined) ?? MAX_DAYS_TO_SEND;
     const diffMs = today.getTime() - emissionDay.getTime();
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-    if (diffDays > MAX_DAYS_TO_SEND) {
+    if (diffDays > maxDays) {
       errors.push({
         field: 'fechaEmision',
-        message: `Emission date exceeds the ${MAX_DAYS_TO_SEND}-day sending window`,
+        message: `Emission date exceeds the ${maxDays}-day sending window for this document type`,
       });
     }
   }

@@ -100,6 +100,6 @@ export interface TicketPollJobData {
   solPass: string;
   /** Whether to use the beta environment */
   isBeta: boolean;
-  /** Document type: 'summary' (default, SOAP) or 'guide' (GRE REST API) */
-  documentType?: 'summary' | 'guide';
+  /** Document type: 'summary' (RC, default), 'voided' (RA), or 'guide' (GRE REST API) */
+  documentType?: 'summary' | 'voided' | 'guide';
 }

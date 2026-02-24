@@ -153,8 +153,30 @@ export const ICBPER_RATE = 0.50;
 /** UIT 2026 — S/ 5,500 */
 export const UIT_2026 = 5500;
 
-/** Plazo máximo para enviar CPE a SUNAT (días calendario) */
+/** Plazo máximo para enviar CPE a SUNAT (días calendario) — por tipo de documento */
 export const MAX_DAYS_TO_SEND = 3;
+
+/**
+ * Per-document-type sending windows (calendar days from emission).
+ * Sources: RS 340-2017, RS 253-2018, updates 2024-2026.
+ *
+ * - Factura (01): 3 days
+ * - Boleta (03): 7 days
+ * - NC/ND (07/08): 3 days
+ * - GRE (09): 7 days
+ * - CRE (20): 9 days
+ * - CPE (40): 9 days
+ * - RC/RA: no strict window (validated by SUNAT at service level)
+ */
+export const MAX_DAYS_BY_DOC_TYPE: Record<string, number> = {
+  '01': 3,
+  '03': 7,
+  '07': 3,
+  '08': 3,
+  '09': 7,
+  '20': 9,
+  '40': 9,
+} as const;
 
 /** Catálogo 18: Modalidad de transporte */
 export const MODALIDAD_TRANSPORTE = {

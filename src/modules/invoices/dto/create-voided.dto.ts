@@ -4,6 +4,7 @@ import {
   ValidateNested,
   IsNumber,
   IsOptional,
+  IsIn,
   Min,
   ArrayMinSize,
 } from 'class-validator';
@@ -15,6 +16,7 @@ import { Type } from 'class-transformer';
 export class VoidedLineDto {
   /** Tipo de documento: 01, 03, 07, 08 */
   @IsString()
+  @IsIn(['01', '03', '07', '08'])
   tipoDoc!: string;
 
   @IsString()

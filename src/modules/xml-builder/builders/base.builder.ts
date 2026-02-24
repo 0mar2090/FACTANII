@@ -24,7 +24,7 @@ import type {
 } from '../interfaces/xml-builder.interfaces.js';
 
 /** Type alias for the xmlbuilder2 builder object returned by create() */
-type XmlNode = ReturnType<typeof create>;
+export type XmlNode = ReturnType<typeof create>;
 
 /**
  * Base class providing shared XML building methods for all SUNAT UBL 2.1 documents.
@@ -384,10 +384,9 @@ export abstract class BaseXmlBuilder {
       .txt(categoryId)
     .up();
 
-    // Tax percentage — IGV is 18%, others are 0%
-    if (tributo.code === CODIGO_TRIBUTO.IGV.code) {
-      taxCategory.ele('cbc:Percent').txt((IGV_RATE * 100).toFixed(2)).up();
-    }
+    // Tax percentage — IGV is 18%, others emit 0%
+    const taxPercent = tributo.code === CODIGO_TRIBUTO.IGV.code ? IGV_RATE * 100 : 0;
+    taxCategory.ele('cbc:Percent').txt(taxPercent.toFixed(2)).up();
 
     const taxScheme = taxCategory.ele('cac:TaxScheme');
     taxScheme.ele('cbc:ID')

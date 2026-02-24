@@ -1,189 +1,144 @@
 # CLAUDE.md — FacturaPE Backend
 
 ## Proyecto
-Backend SaaS de facturación electrónica para SUNAT Perú. Conexión DIRECTA a web services SUNAT (SEE-Del Contribuyente). Sin intermediarios PSE/OSE.
+Backend SaaS de facturación electrónica para SUNAT Perú. Conexión DIRECTA a web services SUNAT (SEE-Del Contribuyente). Sin intermediarios PSE/OSE. Soporta los 9 tipos de CPE: Factura (01), Boleta (03), NC (07), ND (08), GRE (09), CRE (20), CPE (40), Resumen Diario (RC), Comunicación de Baja (RA).
 
 ## Stack Tecnológico (versiones exactas Feb 2026)
 - **Runtime:** Node.js 22 LTS
-- **Framework:** NestJS 11.x + Fastify 5.x (`@nestjs/platform-fastify`)
-- **ORM:** Prisma 7.x con `@prisma/adapter-pg` (driver adapter obligatorio)
+- **Framework:** NestJS 11.1 + Fastify 5.7 (`@nestjs/platform-fastify`)
+- **ORM:** Prisma 7.4 con `@prisma/adapter-pg` (driver adapter obligatorio)
 - **BD:** PostgreSQL 16 con Row-Level Security (RLS)
-- **Colas:** BullMQ 5.x + Redis 7 (`@nestjs/bullmq`)
-- **XML:** xmlbuilder2 (generación UBL 2.1) + fast-xml-parser (parseo CDR)
-- **Firma:** xml-crypto 6.x (XMLDSig SHA-256) + node-forge (PFX→PEM)
-- **SOAP:** soap (node-soap) con WS-Security
-- **PDF:** pdfmake (facturas A4 + tickets 80mm)
-- **Pagos:** mercadopago 2.x (suscripciones PreApproval)
-- **Email:** resend 6.x
-- **Auth:** @nestjs/jwt + @nestjs/passport + passport-jwt
-- **Validación:** class-validator + class-transformer
-- **Rate Limit:** @nestjs/throttler 6.x
-- **Multi-tenancy:** nestjs-cls (AsyncLocalStorage) + PG RLS
-- **Compresión:** archiver (ZIP para SUNAT) + adm-zip (leer CDR)
-- **Cifrado:** crypto nativo Node.js (AES-256-GCM para certificados)
-- **Docs:** @nestjs/swagger + @fastify/swagger
-- **Testing:** vitest + supertest
-- **Package Manager:** pnpm
+- **Colas:** BullMQ 5.66 + Redis 7 (`@nestjs/bullmq` 11.x)
+- **XML:** xmlbuilder2 4.x (generación UBL 2.1) + fast-xml-parser 5.x (parseo CDR)
+- **Firma:** xml-crypto 6.x (XMLDSig SHA-256) + node-forge 1.3 (PFX→PEM)
+- **SOAP:** soap 1.1 (node-soap) con WS-Security
+- **REST (GRE):** axios 1.13 (OAuth2 + REST API para Guía de Remisión)
+- **PDF:** pdfmake 0.3 (facturas A4 + tickets 80mm) + qrcode 1.5
+- **Pagos:** mercadopago 2.12 (suscripciones PreApproval)
+- **Email:** resend 6.9
+- **Auth:** @nestjs/jwt 11 + @nestjs/passport 11 + passport-jwt 4
+- **Validación:** class-validator 0.14 + class-transformer 0.5
+- **Rate Limit:** @nestjs/throttler 6.5
+- **Multi-tenancy:** nestjs-cls 4.5 (AsyncLocalStorage) + PG RLS
+- **Compresión:** archiver 7.x (ZIP para SUNAT) + adm-zip 0.5 (leer CDR)
+- **Cifrado:** crypto nativo Node.js (AES-256-GCM para certificados y SOL)
+- **Docs:** @nestjs/swagger 11 + @fastify/swagger 9
+- **Monitoring:** @sentry/node 10.x + @nestjs/terminus 11.x (health checks)
+- **Testing:** vitest 3.x + supertest 7.x (255 tests, 13 archivos)
+- **Package Manager:** pnpm 9+
 
 ## Estructura de Módulos
 
 ```
 src/
 ├── main.ts                          # Bootstrap Fastify
-├── app.module.ts                    # Root module
-├── common/                          # Shared utilities
-│   ├── decorators/                  # @CurrentUser, @Tenant, @Public, @ApiKeyAuth
+├── app.module.ts                    # Root module (todas las fases)
+├── common/
+│   ├── decorators/                  # @CurrentUser, @Tenant, @Public, @ApiKeyAuth, @SkipTenant
 │   ├── guards/                      # JwtAuthGuard, ApiKeyGuard, TenantGuard, RolesGuard
 │   ├── interceptors/                # LoggingInterceptor, TimeoutInterceptor
-│   ├── filters/                     # HttpExceptionFilter, PrismaExceptionFilter
+│   ├── filters/                     # HttpExceptionFilter, PrismaExceptionFilter, SentryExceptionFilter
 │   ├── pipes/                       # ParseRucPipe, ParseDocTypePipe
 │   ├── middleware/                   # TenantMiddleware (CLS)
 │   ├── interfaces/                  # Shared TypeScript interfaces
-│   ├── constants/                   # Catálogos SUNAT como enums/objetos
-│   │   ├── catalogo-01.ts           # Tipos de documento
-│   │   ├── catalogo-05.ts           # Códigos de tributo
-│   │   ├── catalogo-06.ts           # Tipos doc identidad
-│   │   ├── catalogo-07.ts           # Tipos afectación IGV
-│   │   ├── catalogo-09.ts           # Motivos nota crédito
-│   │   ├── catalogo-10.ts           # Motivos nota débito
-│   │   ├── catalogo-17.ts           # Tipos de operación
-│   │   └── index.ts
-│   └── utils/                       # Helpers: montoEnLetras, calcularIGV, etc.
+│   ├── constants/
+│   │   └── index.ts                 # TODO: catálogos 01-52, namespaces, endpoints, tasas
+│   └── utils/
 │       ├── tax-calculator.ts        # Cálculos IGV/ISC/ICBPER
 │       ├── amount-to-words.ts       # Monto en letras (español)
 │       ├── ruc-validator.ts         # Validación módulo 11
-│       └── encryption.ts            # AES-256-GCM encrypt/decrypt
+│       ├── encryption.ts            # AES-256-GCM encrypt/decrypt
+│       └── zip.ts                   # Utilidades ZIP
 │
-├── prisma/                          # Prisma 7 config
-│   ├── schema.prisma
-│   ├── migrations/
-│   ├── seed.ts
-│   └── prisma.config.ts             # OBLIGATORIO en Prisma 7
-│
-├── modules/
-│   ├── auth/                        # Autenticación y autorización
-│   │   ├── auth.module.ts
-│   │   ├── auth.controller.ts       # POST /auth/register, /auth/login, /auth/refresh
-│   │   ├── auth.service.ts
-│   │   ├── strategies/
-│   │   │   ├── jwt.strategy.ts
-│   │   │   └── api-key.strategy.ts
-│   │   └── dto/
-│   │       ├── register.dto.ts
-│   │       └── login.dto.ts
-│   │
-│   ├── users/                       # Gestión de usuarios
-│   │   ├── users.module.ts
-│   │   ├── users.controller.ts
-│   │   ├── users.service.ts
-│   │   └── dto/
-│   │
-│   ├── companies/                   # Empresas (tenants)
-│   │   ├── companies.module.ts
-│   │   ├── companies.controller.ts  # CRUD + upload certificado + config SOL
-│   │   ├── companies.service.ts
-│   │   └── dto/
-│   │       ├── create-company.dto.ts
-│   │       └── update-sol-credentials.dto.ts
-│   │
-│   ├── certificates/                # Gestión de certificados digitales
-│   │   ├── certificates.module.ts
-│   │   ├── certificates.service.ts  # Upload PFX, validar, extraer info, cifrar
-│   │   └── dto/
-│   │
-│   ├── xml-builder/                 # ⭐ CORE: Generación XML UBL 2.1
-│   │   ├── xml-builder.module.ts
-│   │   ├── xml-builder.service.ts   # Orquestador
-│   │   ├── builders/
-│   │   │   ├── invoice.builder.ts   # Factura (01) y Boleta (03)
-│   │   │   ├── credit-note.builder.ts   # Nota de Crédito (07)
-│   │   │   ├── debit-note.builder.ts    # Nota de Débito (08)
-│   │   │   ├── summary.builder.ts       # Resumen Diario
-│   │   │   ├── voided.builder.ts        # Comunicación de Baja
-│   │   │   └── base.builder.ts          # Clase base con namespaces y estructura común
-│   │   ├── templates/               # Plantillas XML por tipo de documento
-│   │   └── validators/
-│   │       └── xml-validator.ts     # Validación pre-envío contra reglas SUNAT
-│   │
-│   ├── xml-signer/                  # ⭐ CORE: Firma digital XMLDSig
-│   │   ├── xml-signer.module.ts
-│   │   ├── xml-signer.service.ts    # Firma con xml-crypto + SHA-256
-│   │   └── utils/
-│   │       └── pfx-reader.ts        # PFX→PEM con node-forge
-│   │
-│   ├── sunat-client/                # ⭐ CORE: Cliente SOAP para SUNAT
-│   │   ├── sunat-client.module.ts
-│   │   ├── sunat-client.service.ts  # sendBill, sendSummary, getStatus
-│   │   ├── sunat-client.config.ts   # Endpoints beta/producción
-│   │   └── interfaces/
-│   │       ├── sunat-response.interface.ts
-│   │       └── sunat-endpoints.interface.ts
-│   │
-│   ├── cdr-processor/               # Procesamiento de CDR (respuesta SUNAT)
-│   │   ├── cdr-processor.module.ts
-│   │   ├── cdr-processor.service.ts # Descomprimir ZIP, parsear XML, extraer códigos
-│   │   └── interfaces/
-│   │       └── cdr-result.interface.ts
-│   │
-│   ├── invoices/                    # API de comprobantes
-│   │   ├── invoices.module.ts
-│   │   ├── invoices.controller.ts   # POST /invoices/factura, /boleta, /nota-credito, etc.
-│   │   ├── invoices.service.ts      # Orquesta: validar → XML → firmar → ZIP → cola
-│   │   └── dto/
-│   │       ├── create-invoice.dto.ts
-│   │       ├── create-credit-note.dto.ts
-│   │       ├── create-debit-note.dto.ts
-│   │       ├── invoice-item.dto.ts
-│   │       └── invoice-response.dto.ts
-│   │
-│   ├── pdf-generator/               # Representación impresa
-│   │   ├── pdf-generator.module.ts
-│   │   ├── pdf-generator.service.ts
-│   │   ├── templates/
-│   │   │   ├── invoice-a4.template.ts    # Formato A4
-│   │   │   └── invoice-ticket.template.ts # Formato ticket 80mm
-│   │   └── interfaces/
-│   │
-│   ├── queues/                      # BullMQ processors
-│   │   ├── queues.module.ts
-│   │   ├── processors/
-│   │   │   ├── invoice-send.processor.ts   # Envío a SUNAT con reintentos
-│   │   │   ├── pdf-generate.processor.ts   # Generación PDF async
-│   │   │   ├── email-send.processor.ts     # Envío email con CPE adjunto
-│   │   │   └── summary-send.processor.ts   # Resumen diario/baja
-│   │   └── interfaces/
-│   │
-│   ├── consultations/               # APIs de consulta gratuitas
-│   │   ├── consultations.module.ts
-│   │   ├── consultations.controller.ts  # GET /consultas/ruc/:ruc, /dni/:dni, /tipo-cambio
-│   │   └── consultations.service.ts
-│   │
-│   ├── webhooks/                    # Webhooks salientes a clientes
-│   │   ├── webhooks.module.ts
-│   │   ├── webhooks.service.ts
-│   │   └── dto/
-│   │
-│   ├── billing/                     # Suscripciones y planes
-│   │   ├── billing.module.ts
-│   │   ├── billing.controller.ts    # /plans, /subscriptions, /webhook (Mercado Pago)
-│   │   ├── billing.service.ts
-│   │   └── dto/
-│   │
-│   └── notifications/               # Emails transaccionales
-│       ├── notifications.module.ts
-│       └── notifications.service.ts # Resend: bienvenida, factura, alerta
-│
-├── config/                          # Configuración centralizada
+├── config/
 │   ├── app.config.ts
 │   ├── database.config.ts
 │   ├── redis.config.ts
-│   ├── sunat.config.ts              # URLs, modo beta/prod
+│   ├── sunat.config.ts              # SOAP + GRE OAuth2 config
 │   ├── jwt.config.ts
 │   └── mercadopago.config.ts
 │
-└── database/                        # SQL adicional
-    ├── rls-policies.sql             # Row Level Security
-    └── seed-catalogs.sql            # Catálogos SUNAT iniciales
+└── modules/
+    ├── auth/                        # JWT + API Keys + refresh tokens
+    │   ├── auth.module.ts
+    │   ├── auth.controller.ts       # register, login, refresh, api-keys CRUD
+    │   ├── auth.service.ts
+    │   ├── strategies/              # jwt.strategy, api-key.strategy
+    │   └── dto/                     # register.dto, login.dto, create-api-key.dto
+    │
+    ├── users/                       # Gestión de usuarios
+    ├── companies/                   # Empresas (tenants) + upload cert + SOL
+    ├── certificates/                # PFX upload, validar, cifrar AES-256-GCM
+    │
+    ├── xml-builder/                 # ⭐ CORE: Generación XML UBL 2.1
+    │   ├── xml-builder.module.ts
+    │   ├── xml-builder.service.ts   # Orquestador (8 métodos build*)
+    │   ├── builders/
+    │   │   ├── base.builder.ts          # Clase base abstracta (export type XmlNode)
+    │   │   ├── invoice.builder.ts       # Factura (01) y Boleta (03)
+    │   │   ├── credit-note.builder.ts   # Nota de Crédito (07)
+    │   │   ├── debit-note.builder.ts    # Nota de Débito (08)
+    │   │   ├── summary.builder.ts       # Resumen Diario (RC)
+    │   │   ├── voided.builder.ts        # Comunicación de Baja (RA)
+    │   │   ├── retention.builder.ts     # Comprobante de Retención (20)
+    │   │   ├── perception.builder.ts    # Comprobante de Percepción (40)
+    │   │   └── guide.builder.ts         # Guía de Remisión (09)
+    │   ├── interfaces/
+    │   │   └── xml-builder.interfaces.ts  # XmlInvoiceData, XmlRetentionData, XmlPerceptionData, XmlGuideData, etc.
+    │   └── validators/
+    │       └── xml-validator.ts     # 8 métodos validate* (pre-envío)
+    │
+    ├── xml-signer/                  # ⭐ CORE: Firma digital XMLDSig SHA-256
+    │   ├── xml-signer.service.ts
+    │   └── utils/pfx-reader.ts      # PFX→PEM con node-forge
+    │
+    ├── sunat-client/                # ⭐ CORE: Clientes SUNAT
+    │   ├── sunat-client.service.ts  # SOAP: sendBill (endpoint variable), sendSummary, getStatus
+    │   ├── sunat-gre-client.service.ts  # REST: OAuth2 + envío GRE
+    │   └── interfaces/
+    │
+    ├── cdr-processor/               # Descomprimir ZIP, parsear XML CDR
+    │
+    ├── invoices/                    # API de comprobantes (9 tipos)
+    │   ├── invoices.module.ts
+    │   ├── invoices.controller.ts   # 12+ endpoints
+    │   ├── invoices.service.ts      # Orquesta: validate → XML → sign → ZIP → send/queue
+    │   └── dto/
+    │       ├── create-invoice.dto.ts      # Factura/Boleta
+    │       ├── create-credit-note.dto.ts  # NC (07)
+    │       ├── create-debit-note.dto.ts   # ND (08)
+    │       ├── create-summary.dto.ts      # RC
+    │       ├── create-voided.dto.ts       # RA
+    │       ├── create-retention.dto.ts    # CRE (20)
+    │       ├── create-perception.dto.ts   # CPE (40)
+    │       ├── create-guide.dto.ts        # GRE (09)
+    │       ├── invoice-item.dto.ts
+    │       └── invoice-response.dto.ts
+    │
+    ├── pdf-generator/               # PDF A4 + ticket 80mm
+    │   ├── pdf-generator.service.ts # generateA4(), generateTicket()
+    │   ├── templates/
+    │   │   ├── invoice-a4.template.ts
+    │   │   └── invoice-ticket.template.ts
+    │   └── interfaces/
+    │       └── pdf-data.interface.ts
+    │
+    ├── queues/                      # BullMQ processors
+    │   ├── queues.module.ts
+    │   ├── queues.constants.ts      # 5 colas definidas
+    │   ├── processors/
+    │   │   ├── invoice-send.processor.ts   # Envío síncrono a SUNAT
+    │   │   ├── pdf-generate.processor.ts   # PDF async
+    │   │   ├── email-send.processor.ts     # Email con adjuntos
+    │   │   ├── summary-send.processor.ts   # RC/RA → ticket
+    │   │   └── ticket-poll.processor.ts    # Polling getStatus (summary|voided|guide)
+    │   └── interfaces/
+    │       └── queue-job-data.interfaces.ts
+    │
+    ├── consultations/               # RUC, DNI, tipo cambio, validar CPE
+    ├── webhooks/                    # CRUD + envío HMAC-signed
+    ├── billing/                     # Planes + suscripciones + Mercado Pago
+    └── notifications/               # Emails transaccionales (Resend)
 ```
 
 ## Schema Prisma (PostgreSQL)
@@ -196,40 +151,39 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // === AUTH ===
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  passwordHash  String    @map("password_hash")
-  name          String
-  isActive      Boolean   @default(true) @map("is_active")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  companyUsers  CompanyUser[]
-  apiKeys       ApiKey[]
+  companyUsers CompanyUser[]
+  apiKeys      ApiKey[]
 
   @@map("users")
 }
 
 model ApiKey {
-  id          String    @id @default(cuid())
-  userId      String    @map("user_id")
-  companyId   String    @map("company_id")
-  keyHash     String    @unique @map("key_hash")
-  prefix      String    // Primeros 8 chars para identificación
-  name        String
-  lastUsedAt  DateTime? @map("last_used_at")
-  expiresAt   DateTime? @map("expires_at")
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now()) @map("created_at")
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  companyId  String    @map("company_id")
+  keyHash    String    @unique @map("key_hash")
+  prefix     String    // Primeros 8 chars para identificación
+  name       String
+  lastUsedAt DateTime? @map("last_used_at")
+  expiresAt  DateTime? @map("expires_at")
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at")
 
-  user        User      @relation(fields: [userId], references: [id])
-  company     Company   @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
 
   @@map("api_keys")
 }
@@ -237,54 +191,62 @@ model ApiKey {
 // === TENANCY ===
 
 model Company {
-  id              String    @id @default(cuid())
-  ruc             String    @unique
-  razonSocial     String    @map("razon_social")
-  nombreComercial String?   @map("nombre_comercial")
+  id              String  @id @default(cuid())
+  ruc             String  @unique
+  razonSocial     String  @map("razon_social")
+  nombreComercial String? @map("nombre_comercial")
   direccion       String
-  ubigeo          String    // 6 dígitos
+  ubigeo          String  // 6 dígitos
   departamento    String
   provincia       String
   distrito        String
   urbanizacion    String?
-  codigoPais      String    @default("PE") @map("codigo_pais")
+  codigoPais      String  @default("PE") @map("codigo_pais")
 
   // SOL credentials (cifrados AES-256-GCM)
-  solUser         String?   @map("sol_user")       // cifrado
-  solPass         String?   @map("sol_pass")       // cifrado
+  solUser String? @map("sol_user")
+  solPass String? @map("sol_pass")
+  solIv   String? @map("sol_iv")
+  solTag  String? @map("sol_tag")
 
-  // Config facturación
-  serieFactura    String    @default("F001") @map("serie_factura")
-  serieBoleta     String    @default("B001") @map("serie_boleta")
-  serieNCFactura  String    @default("FC01") @map("serie_nc_factura")
-  serieNDFactura  String    @default("FD01") @map("serie_nd_factura")
-  serieNCBoleta   String    @default("BC01") @map("serie_nc_boleta")
-  serieNDBoleta   String    @default("BD01") @map("serie_nd_boleta")
-  nextCorrelativo Json      @default("{}") @map("next_correlativo") // { "F001": 1, "B001": 1 }
+  // Series (9 tipos de documento)
+  serieFactura      String @default("F001") @map("serie_factura")
+  serieBoleta       String @default("B001") @map("serie_boleta")
+  serieNCFactura    String @default("FC01") @map("serie_nc_factura")
+  serieNDFactura    String @default("FD01") @map("serie_nd_factura")
+  serieNCBoleta     String @default("BC01") @map("serie_nc_boleta")
+  serieNDBoleta     String @default("BD01") @map("serie_nd_boleta")
+  serieRetencion    String @default("R001") @map("serie_retencion")
+  seriePercepcion   String @default("P001") @map("serie_percepcion")
+  serieGuiaRemision String @default("T001") @map("serie_guia_remision")
 
-  // Entorno
-  isBeta          Boolean   @default(true) @map("is_beta")
-  isActive        Boolean   @default(true) @map("is_active")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  // Correlativos por serie { "F001": 1, "B001": 1 }
+  nextCorrelativo Json @default("{}") @map("next_correlativo")
 
-  companyUsers    CompanyUser[]
-  certificates    Certificate[]
-  invoices        Invoice[]
-  apiKeys         ApiKey[]
-  subscription    Subscription?
+  // Config
+  isBeta   Boolean  @default(true) @map("is_beta")
+  isActive Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyUsers CompanyUser[]
+  certificates Certificate[]
+  invoices     Invoice[]
+  apiKeys      ApiKey[]
+  subscription Subscription?
+  webhooks     Webhook[]
 
   @@map("companies")
 }
 
 model CompanyUser {
-  id        String    @id @default(cuid())
-  userId    String    @map("user_id")
-  companyId String    @map("company_id")
-  role      String    @default("member") // owner, admin, member
+  id        String @id @default(cuid())
+  userId    String @map("user_id")
+  companyId String @map("company_id")
+  role      String @default("member") // owner, admin, member
 
-  user      User      @relation(fields: [userId], references: [id])
-  company   Company   @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
 
   @@unique([userId, companyId])
   @@map("company_users")
@@ -293,23 +255,23 @@ model CompanyUser {
 // === CERTIFICADOS ===
 
 model Certificate {
-  id              String    @id @default(cuid())
-  companyId       String    @map("company_id")
-  pfxData         Bytes     @map("pfx_data")       // cifrado AES-256-GCM
-  pfxIv           String    @map("pfx_iv")
-  pfxAuthTag      String    @map("pfx_auth_tag")
-  passphrase      String    // cifrado AES-256-GCM
-  passphraseIv    String    @map("passphrase_iv")
-  passphraseTag   String    @map("passphrase_tag")
-  serialNumber    String    @map("serial_number")
-  issuer          String
-  subject         String
-  validFrom       DateTime  @map("valid_from")
-  validTo         DateTime  @map("valid_to")
-  isActive        Boolean   @default(true) @map("is_active")
-  createdAt       DateTime  @default(now()) @map("created_at")
+  id            String   @id @default(cuid())
+  companyId     String   @map("company_id")
+  pfxData       Bytes    @map("pfx_data")       // cifrado AES-256-GCM
+  pfxIv         String   @map("pfx_iv")
+  pfxAuthTag    String   @map("pfx_auth_tag")
+  passphrase    String                           // cifrado AES-256-GCM
+  passphraseIv  String   @map("passphrase_iv")
+  passphraseTag String   @map("passphrase_tag")
+  serialNumber  String   @map("serial_number")
+  issuer        String
+  subject       String
+  validFrom     DateTime @map("valid_from")
+  validTo       DateTime @map("valid_to")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  company         Company   @relation(fields: [companyId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
 
   @@map("certificates")
 }
@@ -317,76 +279,76 @@ model Certificate {
 // === COMPROBANTES ===
 
 model Invoice {
-  id                String    @id @default(cuid())
-  companyId         String    @map("company_id")
+  id        String @id @default(cuid())
+  companyId String @map("company_id")
 
   // Identificación
-  tipoDoc           String    @map("tipo_doc")          // 01, 03, 07, 08
-  serie             String                               // F001, B001, etc.
-  correlativo       Int
-  tipoOperacion     String    @default("0101") @map("tipo_operacion")
+  tipoDoc       String @map("tipo_doc")          // 01, 03, 07, 08, 09, 20, 40, RC, RA
+  serie         String
+  correlativo   Int
+  tipoOperacion String @default("0101") @map("tipo_operacion")
 
   // Fechas
-  fechaEmision      DateTime  @map("fecha_emision")
-  fechaVencimiento  DateTime? @map("fecha_vencimiento")
+  fechaEmision     DateTime  @map("fecha_emision")
+  fechaVencimiento DateTime? @map("fecha_vencimiento")
 
   // Cliente
-  clienteTipoDoc    String    @map("cliente_tipo_doc")   // Cat 06
-  clienteNumDoc     String    @map("cliente_num_doc")
-  clienteNombre     String    @map("cliente_nombre")
-  clienteDireccion  String?   @map("cliente_direccion")
-  clienteEmail      String?   @map("cliente_email")
+  clienteTipoDoc  String  @map("cliente_tipo_doc")   // Cat 06
+  clienteNumDoc   String  @map("cliente_num_doc")
+  clienteNombre   String  @map("cliente_nombre")
+  clienteDireccion String? @map("cliente_direccion")
+  clienteEmail    String? @map("cliente_email")
 
   // Moneda y totales
-  moneda            String    @default("PEN")
-  opGravadas        Decimal   @default(0) @map("op_gravadas") @db.Decimal(12, 2)
-  opExoneradas      Decimal   @default(0) @map("op_exoneradas") @db.Decimal(12, 2)
-  opInafectas       Decimal   @default(0) @map("op_inafectas") @db.Decimal(12, 2)
-  opGratuitas       Decimal   @default(0) @map("op_gratuitas") @db.Decimal(12, 2)
-  igv               Decimal   @default(0) @db.Decimal(12, 2)
-  isc               Decimal   @default(0) @db.Decimal(12, 2)
-  icbper            Decimal   @default(0) @db.Decimal(12, 2)
-  otrosCargos       Decimal   @default(0) @map("otros_cargos") @db.Decimal(12, 2)
-  otrosTributos     Decimal   @default(0) @map("otros_tributos") @db.Decimal(12, 2)
-  descuentoGlobal   Decimal   @default(0) @map("descuento_global") @db.Decimal(12, 2)
-  totalVenta        Decimal   @map("total_venta") @db.Decimal(12, 2)
+  moneda         String  @default("PEN")
+  opGravadas     Decimal @default(0) @map("op_gravadas") @db.Decimal(12, 2)
+  opExoneradas   Decimal @default(0) @map("op_exoneradas") @db.Decimal(12, 2)
+  opInafectas    Decimal @default(0) @map("op_inafectas") @db.Decimal(12, 2)
+  opGratuitas    Decimal @default(0) @map("op_gratuitas") @db.Decimal(12, 2)
+  igv            Decimal @default(0) @db.Decimal(12, 2)
+  isc            Decimal @default(0) @db.Decimal(12, 2)
+  icbper         Decimal @default(0) @db.Decimal(12, 2)
+  otrosCargos    Decimal @default(0) @map("otros_cargos") @db.Decimal(12, 2)
+  otrosTributos  Decimal @default(0) @map("otros_tributos") @db.Decimal(12, 2)
+  descuentoGlobal Decimal @default(0) @map("descuento_global") @db.Decimal(12, 2)
+  totalVenta     Decimal @map("total_venta") @db.Decimal(12, 2)
 
   // Forma de pago
-  formaPago         String    @default("Contado") @map("forma_pago") // Contado, Credito
-  cuotas            Json?     // [{ monto, fechaPago }]
+  formaPago String @default("Contado") @map("forma_pago") // Contado, Credito
+  cuotas    Json?  // [{ monto, moneda, fechaPago }]
 
-  // Nota de crédito/débito
-  docRefTipo        String?   @map("doc_ref_tipo")       // Tipo doc referencia
-  docRefSerie       String?   @map("doc_ref_serie")
-  docRefCorrelativo Int?      @map("doc_ref_correlativo")
-  motivoNota        String?   @map("motivo_nota")        // Cat 09 o Cat 10
+  // Referencia (NC/ND)
+  docRefTipo        String? @map("doc_ref_tipo")
+  docRefSerie       String? @map("doc_ref_serie")
+  docRefCorrelativo Int?    @map("doc_ref_correlativo")
+  motivoNota        String? @map("motivo_nota")
 
   // XML y firma
-  xmlContent        String?   @map("xml_content")        // XML generado (comprimido)
-  xmlHash           String?   @map("xml_hash")           // Hash SHA-256 del XML firmado
-  xmlSigned         Boolean   @default(false) @map("xml_signed")
+  xmlContent String?  @map("xml_content")
+  xmlHash    String?  @map("xml_hash")
+  xmlSigned  Boolean  @default(false) @map("xml_signed")
 
   // Estado SUNAT
-  status            String    @default("DRAFT") // DRAFT, PENDING, QUEUED, SENDING, ACCEPTED, REJECTED, OBSERVED
-  sunatCode         String?   @map("sunat_code")
-  sunatMessage      String?   @map("sunat_message")
-  sunatNotes        Json?     @map("sunat_notes")        // Observaciones
-  cdrZip            Bytes?    @map("cdr_zip")
+  status       String  @default("DRAFT") // DRAFT, PENDING, QUEUED, SENDING, ACCEPTED, REJECTED, OBSERVED
+  sunatCode    String? @map("sunat_code")
+  sunatMessage String? @map("sunat_message")
+  sunatNotes   Json?   @map("sunat_notes")
+  cdrZip       Bytes?  @map("cdr_zip")
 
   // PDF
-  pdfUrl            String?   @map("pdf_url")
+  pdfUrl String? @map("pdf_url")
 
   // Tracking
-  sentAt            DateTime? @map("sent_at")
-  attempts          Int       @default(0)
-  lastAttemptAt     DateTime? @map("last_attempt_at")
-  lastError         String?   @map("last_error")
+  sentAt        DateTime? @map("sent_at")
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime? @map("last_attempt_at")
+  lastError     String?   @map("last_error")
 
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  company           Company   @relation(fields: [companyId], references: [id])
-  items             InvoiceItem[]
+  company Company       @relation(fields: [companyId], references: [id])
+  items   InvoiceItem[]
 
   @@unique([companyId, tipoDoc, serie, correlativo])
   @@index([companyId, status])
@@ -396,64 +358,115 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id              String    @id @default(cuid())
-  invoiceId       String    @map("invoice_id")
+  id        String @id @default(cuid())
+  invoiceId String @map("invoice_id")
 
-  cantidad        Decimal   @db.Decimal(12, 3)
-  unidadMedida    String    @default("NIU") @map("unidad_medida") // Cat 03
-  descripcion     String
-  codigo          String?   // Código interno del producto
-  codigoSunat     String?   @map("codigo_sunat") // Código producto SUNAT
+  cantidad       Decimal @db.Decimal(12, 3)
+  unidadMedida   String  @default("NIU") @map("unidad_medida")
+  descripcion    String
+  codigo         String?
+  codigoSunat    String? @map("codigo_sunat")
 
-  valorUnitario   Decimal   @map("valor_unitario") @db.Decimal(12, 4) // Sin IGV
-  precioUnitario  Decimal   @map("precio_unitario") @db.Decimal(12, 4) // Con IGV
-  valorVenta      Decimal   @map("valor_venta") @db.Decimal(12, 2)
+  valorUnitario  Decimal @map("valor_unitario") @db.Decimal(12, 4) // Sin IGV
+  precioUnitario Decimal @map("precio_unitario") @db.Decimal(12, 4) // Con IGV
+  valorVenta     Decimal @map("valor_venta") @db.Decimal(12, 2)
 
-  tipoAfectacion  String    @default("10") @map("tipo_afectacion") // Cat 07
-  igv             Decimal   @default(0) @db.Decimal(12, 2)
-  isc             Decimal   @default(0) @db.Decimal(12, 2)
-  icbper          Decimal   @default(0) @db.Decimal(12, 2)
-  descuento       Decimal   @default(0) @db.Decimal(12, 2)
+  tipoAfectacion String  @default("10") @map("tipo_afectacion") // Cat 07
+  igv            Decimal @default(0) @db.Decimal(12, 2)
+  isc            Decimal @default(0) @db.Decimal(12, 2)
+  icbper         Decimal @default(0) @db.Decimal(12, 2)
+  descuento      Decimal @default(0) @db.Decimal(12, 2)
 
-  invoice         Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@map("invoice_items")
+}
+
+// === WEBHOOKS ===
+
+model Webhook {
+  id        String   @id @default(cuid())
+  companyId String   @map("company_id")
+  url       String
+  events    String[] // ["invoice.accepted", "invoice.rejected"]
+  secret    String?  // HMAC secret for signing
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("webhooks")
 }
 
 // === BILLING ===
 
 model Plan {
-  id              String    @id @default(cuid())
-  name            String    // Starter, Pro, Business, Enterprise
-  slug            String    @unique
-  priceMonthly    Decimal   @map("price_monthly") @db.Decimal(8, 2) // en PEN
-  maxInvoices     Int       @map("max_invoices") // por mes
-  maxCompanies    Int       @map("max_companies")
-  features        Json      // { webhooks: true, whatsapp: false, ... }
-  isActive        Boolean   @default(true) @map("is_active")
+  id           String  @id @default(cuid())
+  name         String  // Starter, Pro, Business, Enterprise
+  slug         String  @unique
+  priceMonthly Decimal @map("price_monthly") @db.Decimal(8, 2) // en PEN
+  maxInvoices  Int     @map("max_invoices")
+  maxCompanies Int     @map("max_companies")
+  features     Json    // { webhooks: true, whatsapp: false, ... }
+  isActive     Boolean @default(true) @map("is_active")
 
-  subscriptions   Subscription[]
+  subscriptions Subscription[]
 
   @@map("plans")
 }
 
 model Subscription {
-  id                String    @id @default(cuid())
-  companyId         String    @unique @map("company_id")
-  planId            String    @map("plan_id")
-  mpPreapprovalId   String?   @map("mp_preapproval_id") // ID Mercado Pago
-  status            String    @default("active") // active, paused, cancelled
+  id                 String   @id @default(cuid())
+  companyId          String   @unique @map("company_id")
+  planId             String   @map("plan_id")
+  mpPreapprovalId    String?  @map("mp_preapproval_id") // ID Mercado Pago
+  status             String   @default("active") // active, paused, cancelled
   currentPeriodStart DateTime @map("current_period_start")
   currentPeriodEnd   DateTime @map("current_period_end")
-  invoicesUsed      Int       @default(0) @map("invoices_used") // este período
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  invoicesUsed       Int      @default(0) @map("invoices_used")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
-  company           Company   @relation(fields: [companyId], references: [id])
-  plan              Plan      @relation(fields: [planId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+  plan    Plan    @relation(fields: [planId], references: [id])
 
   @@map("subscriptions")
 }
+```
+
+## Constantes SUNAT (`src/common/constants/index.ts`)
+
+Todos los catálogos en un solo archivo:
+
+```
+TIPO_DOCUMENTO          Cat 01: 01, 03, 07, 08, 09, 20, 40
+TIPO_MONEDA             Cat 02: PEN, USD, EUR
+UNIDAD_MEDIDA           Cat 03: NIU, ZZ, KGM, LTR, MTR, MTK, HUR, DAY, BX, BG, EA
+CODIGO_TRIBUTO          Cat 05: IGV(1000), IVAP(1016), ISC(2000), ICBPER(7152), EXP(9995), GRA(9996), EXO(9997), INA(9998), OTROS(9999)
+TIPO_DOC_IDENTIDAD      Cat 06: 0, 1, 4, 6, 7, -
+TIPO_AFECTACION_IGV     Cat 07: 10-17, 20-21, 30-36, 40
+MOTIVO_NOTA_CREDITO     Cat 09: 01-13
+MOTIVO_NOTA_DEBITO      Cat 10: 01, 02, 03, 11
+TIPO_PRECIO             Cat 16: 01, 02
+TIPO_OPERACION          Cat 17/51: 0100, 0101, 0104, 0112, 0200, 0201, 0208, 1001, 2001
+MODALIDAD_TRANSPORTE    Cat 18: 01 (público), 02 (privado)
+MOTIVO_TRASLADO         Cat 20: 01-04, 06-09, 11, 13-14, 17-19
+REGIMEN_PERCEPCION      Cat 22: 01 (2%), 02 (1%), 03 (0.5%)
+REGIMEN_RETENCION       Cat 23: 01 (3%), 02 (6%)
+LEYENDA                 Cat 52: 1000, 1002, 2000, 2001, 2006, 2007, 2010
+
+IGV_RATE = 0.18          ICBPER_RATE = 0.50          UIT_2026 = 5500
+MAX_DAYS_BY_DOC_TYPE     { '01':3, '03':7, '07':3, '08':3, '09':7, '20':9, '40':9 }
+RETENCION_RATES          { '01':0.03, '02':0.06 }
+PERCEPCION_RATES         { '01':0.02, '02':0.01, '03':0.005 }
+
+UBL_NAMESPACES: INVOICE, CREDIT_NOTE, DEBIT_NOTE, SUMMARY_DOCUMENTS, VOIDED_DOCUMENTS,
+                DESPATCH_ADVICE, RETENTION, PERCEPTION, CAC, CBC, DS, EXT, SAC, QDT, UDT
+
+SUNAT_ENDPOINTS:   BETA.INVOICE, BETA.RETENTION, PRODUCTION.INVOICE, PRODUCTION.RETENTION,
+                   PRODUCTION.CONSULT_CDR, PRODUCTION.CONSULT_VALID
+SUNAT_GRE_ENDPOINTS: BETA.AUTH, BETA.API, PRODUCTION.AUTH, PRODUCTION.API
+SUNAT_GRE_OAUTH_SCOPE, SUNAT_BETA_CREDENTIALS
 ```
 
 ## Reglas de Desarrollo
@@ -471,39 +484,44 @@ model Subscription {
 ### Autenticación
 - JWT access token: 15 min, refresh token: 7 días (rotation)
 - API Keys: hash SHA-256, prefijo de 8 chars para identificar
-- Guards en orden: ThrottlerGuard → JwtAuthGuard → TenantGuard → RolesGuard
+- Guards en orden: TenantThrottlerGuard → JwtAuthGuard → ApiKeyGuard → TenantGuard → RolesGuard
 
 ### Multi-tenancy
 - Cada request DEBE resolver un companyId (del JWT o API Key)
 - CLS (nestjs-cls) almacena tenantId en AsyncLocalStorage
 - Prisma Client Extension ejecuta SET tenancy.tenant_id antes de cada query
 - RLS policies en PostgreSQL filtran automáticamente
+- `@SkipTenant()` decorator para rutas sin contexto de empresa
 
 ### XML/SUNAT
+- **9 tipos de documento**: Factura (01), Boleta (03), NC (07), ND (08), GRE (09), CRE (20), CPE (40), RC, RA
+- **7 documentos síncronos** (sendBill): 01, 03, 07, 08, 09, 20, 40
+- **2 documentos asíncronos** (sendSummary → ticket → getStatus): RC, RA
+- **GRE (09)**: Usa REST API con OAuth2 (NO SOAP), endpoint separado `SUNAT_GRE_ENDPOINTS`
+- **CRE/CPE (20/40)**: SOAP pero endpoint `RETENTION` (diferente al de facturas)
 - Tasa IGV: 18% (validar con tolerancia ±1 según reglas feb 2026)
 - Firma: SHA-256 + RSA (NO SHA-1)
-- Namespaces UBL 2.1 exactos (ver sección arriba)
 - ZIP name: `{RUC}-{TIPO}-{SERIE}-{CORRELATIVO}.zip`
-- Envío máximo 3 días calendario desde emisión
-- Beta URL: `https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl`
-- Producción URL: `https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl`
+- Envío máximo según MAX_DAYS_BY_DOC_TYPE
 - Usuario SOAP: `{RUC}{UsuarioSOL}` (concatenado sin separador)
+- `sendBill(endpointType: 'invoice' | 'retention')` — parámetro para elegir endpoint
 
-### Colas BullMQ
-- Cola `invoice-send`: envío a SUNAT, 5 intentos, backoff exponencial (2s base)
-- Cola `pdf-generate`: generación PDF, 3 intentos
-- Cola `email-send`: envío email con adjuntos, 3 intentos
-- Cola `summary-send`: resúmenes diarios, 5 intentos
-- Concurrency: 5 por procesador
-- Rate limiter: max 10 jobs/segundo (no saturar SUNAT)
+### Colas BullMQ (5 colas)
+- `invoice-send`: envío síncrono a SUNAT, 5 intentos, backoff exponencial (2s base), concurrency 5
+- `pdf-generate`: generación PDF, 3 intentos, concurrency 5
+- `email-send`: envío email con adjuntos, 3 intentos, concurrency 5
+- `summary-send`: RC/RA envío → ticket, 5 intentos, backoff exponencial (2s base), concurrency 5
+- `ticket-poll`: polling getStatus, 15 intentos, backoff exponencial (10s base, max 5min), concurrency 3
+  - `documentType`: 'summary' | 'voided' | 'guide'
 
 ### Seguridad
 - Certificados .pfx cifrados con AES-256-GCM antes de almacenar en BD
-- Claves SOL cifradas con AES-256-GCM
+- Claves SOL cifradas con AES-256-GCM (con IV y authTag separados)
 - Master key en variable de entorno `ENCRYPTION_KEY` (32 bytes hex)
 - Rate limiting: 3 req/s burst, 20 req/10s, 100 req/min
 - CORS configurado para dominios específicos
 - Helmet headers via @fastify/helmet
+- Webhooks firmados con HMAC
 
 ## Variables de Entorno (.env)
 
@@ -529,10 +547,18 @@ JWT_REFRESH_EXPIRATION=7d
 # Encryption (32 bytes hex = 64 chars)
 ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
-# SUNAT
+# SUNAT — SOAP
 SUNAT_ENV=beta
 SUNAT_BETA_URL=https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl
 SUNAT_PROD_URL=https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl
+SUNAT_BETA_RUC=20000000001
+SUNAT_BETA_USER=MODDATOS
+SUNAT_BETA_PASS=moddatos
+SUNAT_SOAP_TIMEOUT=60000
+
+# SUNAT — GRE REST API (OAuth2)
+SUNAT_GRE_CLIENT_ID=
+SUNAT_GRE_CLIENT_SECRET=
 
 # Mercado Pago
 MP_ACCESS_TOKEN=TEST-xxx
@@ -575,92 +601,84 @@ volumes:
 ## Endpoints API v1
 
 ```
+# Auth
 POST   /api/v1/auth/register
 POST   /api/v1/auth/login
 POST   /api/v1/auth/refresh
-POST   /api/v1/auth/api-keys          (crear API key)
+POST   /api/v1/auth/api-keys
 DELETE /api/v1/auth/api-keys/:id
 
+# Companies
 GET    /api/v1/companies
 POST   /api/v1/companies
 GET    /api/v1/companies/:id
 PUT    /api/v1/companies/:id
-POST   /api/v1/companies/:id/certificate   (upload .pfx)
+POST   /api/v1/companies/:id/certificate
 PUT    /api/v1/companies/:id/sol-credentials
 
-POST   /api/v1/invoices/factura         (tipo 01)
-POST   /api/v1/invoices/boleta          (tipo 03)
-POST   /api/v1/invoices/nota-credito    (tipo 07)
-POST   /api/v1/invoices/nota-debito     (tipo 08)
-POST   /api/v1/invoices/resumen-diario
-POST   /api/v1/invoices/comunicacion-baja
-GET    /api/v1/invoices                 (listar con filtros)
-GET    /api/v1/invoices/:id
-GET    /api/v1/invoices/:id/xml         (descargar XML)
-GET    /api/v1/invoices/:id/pdf         (descargar PDF)
-GET    /api/v1/invoices/:id/cdr         (descargar CDR)
-POST   /api/v1/invoices/:id/resend      (reenviar a SUNAT)
+# Comprobantes electrónicos (9 tipos)
+POST   /api/v1/invoices/factura            (01 — Factura)
+POST   /api/v1/invoices/boleta             (03 — Boleta de Venta)
+POST   /api/v1/invoices/nota-credito       (07 — Nota de Crédito)
+POST   /api/v1/invoices/nota-debito        (08 — Nota de Débito)
+POST   /api/v1/invoices/resumen-diario     (RC — Resumen Diario)
+POST   /api/v1/invoices/comunicacion-baja  (RA — Comunicación de Baja)
+POST   /api/v1/invoices/retencion          (20 — Comprobante de Retención)
+POST   /api/v1/invoices/percepcion         (40 — Comprobante de Percepción)
+POST   /api/v1/invoices/guia-remision      (09 — Guía de Remisión)
 
+# Consultas y descargas
+GET    /api/v1/invoices                    (listar con filtros)
+GET    /api/v1/invoices/:id
+GET    /api/v1/invoices/:id/xml
+GET    /api/v1/invoices/:id/pdf
+GET    /api/v1/invoices/:id/cdr
+POST   /api/v1/invoices/:id/resend
+
+# Consultas gratuitas
 GET    /api/v1/consultas/ruc/:ruc
 GET    /api/v1/consultas/dni/:dni
 GET    /api/v1/consultas/tipo-cambio
 GET    /api/v1/consultas/validar-cpe
 
+# Webhooks
+POST   /api/v1/webhooks
+GET    /api/v1/webhooks
+DELETE /api/v1/webhooks/:id
+
+# Billing
 GET    /api/v1/plans
 GET    /api/v1/subscriptions/current
 POST   /api/v1/subscriptions
-POST   /api/v1/billing/webhook          (Mercado Pago IPN)
+POST   /api/v1/billing/webhook            (Mercado Pago IPN)
 ```
 
-## Orden de Implementación (fases)
+## Arquitectura del Flujo de Emisión
 
-### Fase 1 — Foundation (arrancar acá)
-1. Scaffold NestJS 11 + Fastify
-2. Docker Compose (Postgres + Redis)
-3. Prisma 7 schema + migraciones + seed
-4. Auth module (JWT + API Keys)
-5. Companies module (CRUD + RLS)
-6. Certificates module (upload + cifrado)
-7. Config module centralizado
-8. Global guards, filters, interceptors
-
-### Fase 2 — Core Engine
-1. Catálogos SUNAT (constantes)
-2. Tax calculator utility
-3. XML Builder: Factura (01) — el más completo
-4. XML Signer (XMLDSig SHA-256)
-5. SUNAT Client (SOAP sendBill)
-6. CDR Processor (parsear respuesta)
-7. Invoices service (orquestación completa)
-8. Testing contra beta SUNAT
-
-### Fase 3 — Otros documentos
-1. XML Builder: Boleta (03)
-2. XML Builder: Nota de Crédito (07)
-3. XML Builder: Nota de Débito (08)
-4. Resumen Diario
-5. Comunicación de Baja
-6. Validador pre-envío
-
-### Fase 4 — Productización
-1. BullMQ queues + processors
-2. PDF Generator (A4 + ticket)
-3. Consultas API (RUC, DNI, tipo cambio)
-4. Webhooks salientes
-5. Billing + Mercado Pago
-6. Notifications (Resend)
-7. Rate limiting
-8. Swagger docs completos
-
-### Fase 5 — Production
-1. Health checks + monitoring
-2. Logging estructurado
-3. Error tracking (Sentry)
-4. CI/CD pipeline
-5. Dockerfile producción (multi-stage)
-6. Testing E2E
-7. Migrar empresas de beta → producción
+### Documentos síncronos (01, 03, 07, 08, 20, 40)
 ```
+DTO → validate → loadCompany/cert/SOL → getCorrelativo → calcTotals →
+buildXML → signXML → ZIP → sendBill(SOAP) → processCDR → save → queuePDF
+```
+
+### Resumen Diario / Comunicación de Baja (RC, RA)
+```
+DTO → validate → loadCompany/cert/SOL → getCorrelativo → buildXML →
+signXML → ZIP → sendSummary(SOAP) → ticket → queueTicketPoll → save
+```
+
+### Guía de Remisión (09) — REST API
+```
+DTO → validate → loadCompany/cert/SOL → getCorrelativo → buildXML →
+signXML → ZIP → sendGRE(REST+OAuth2) → ticket → queueTicketPoll → save
+```
+
+### Helpers internos (InvoicesService)
+- `prepareDocumentContext(companyId, options?)` — carga company, cert, SOL (options: `skipQuota`)
+- `signAndSendSoap(xmlString, fileName, zipFileName, ruc, solUser, solPass, isBeta, endpointType)` — firma + ZIP + envío SOAP
+- `buildXmlCompany(company)` → `XmlCompany`
+- `toResponseDto(invoice)` → `InvoiceResponseDto`
+- `atomicIncrementCorrelativo(companyId, serie)` — SQL atómico por serie
 
 ## Comandos Útiles
 
@@ -670,12 +688,48 @@ pnpm dev                  # NestJS watch mode
 pnpm db:migrate           # Prisma migrate dev
 pnpm db:seed              # Seed catálogos
 pnpm db:studio            # Prisma Studio
+pnpm db:generate          # Regenerar Prisma Client
 
 # Testing
-pnpm test                 # Vitest
+pnpm test                 # Vitest (255 tests, 13 archivos)
 pnpm test:e2e             # E2E tests
+pnpm test:cov             # Coverage
+
+# Build
+pnpm build                # NestJS build (nest build)
+rm -f tsconfig.tsbuildinfo && npx tsc --build  # Si build falla por stale tsbuildinfo
 
 # Producción
-pnpm build
-pnpm start:prod
+pnpm start:prod           # NODE_ENV=production node dist/main.js
+```
+
+## Notas Técnicas Importantes
+
+### node-forge ESM
+```typescript
+import forge from 'node-forge';  // default import, NO namespace
+```
+
+### Prisma 7 Bytes
+```typescript
+// Prisma 7 devuelve Uint8Array<ArrayBuffer>, envolver con Buffer:
+const pfxBuffer = Buffer.from(certificate.pfxData);
+```
+
+### XmlNode type (base.builder.ts)
+```typescript
+export type XmlNode = ReturnType<typeof create>;
+// Todos los builders usan XmlNode, NO 'any'
+```
+
+### formaPago type safety
+```typescript
+const formaPago: 'Contado' | 'Credito' =
+  dto.formaPago === 'Credito' ? 'Credito' : 'Contado';
+```
+
+### Build stale fix
+Si `npx tsc --noEmit` o `nest build` da errores espurios:
+```bash
+rm -f tsconfig.tsbuildinfo && npx tsc --build
 ```

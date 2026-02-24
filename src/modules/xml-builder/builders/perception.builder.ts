@@ -9,7 +9,7 @@ import type {
   XmlPerceptionData,
   XmlPerceptionLine,
 } from '../interfaces/xml-builder.interfaces.js';
-import { BaseXmlBuilder } from './base.builder.js';
+import { BaseXmlBuilder, type XmlNode } from './base.builder.js';
 
 /**
  * Builds the XML for Comprobante de Percepción (tipo 40).
@@ -95,7 +95,7 @@ export class PerceptionBuilder extends BaseXmlBuilder {
     return doc;
   }
 
-  private addAgentParty(doc: any, data: XmlPerceptionData): void {
+  private addAgentParty(doc: XmlNode, data: XmlPerceptionData): void {
     const agent = doc.ele('cac:AgentParty');
 
     agent
@@ -135,7 +135,7 @@ export class PerceptionBuilder extends BaseXmlBuilder {
     agent.up();
   }
 
-  private addReceiverParty(doc: any, data: XmlPerceptionData): void {
+  private addReceiverParty(doc: XmlNode, data: XmlPerceptionData): void {
     const receiver = doc.ele('cac:ReceiverParty');
 
     receiver
@@ -173,7 +173,7 @@ export class PerceptionBuilder extends BaseXmlBuilder {
   }
 
   private addPerceptionDocumentReference(
-    doc: any,
+    doc: XmlNode,
     item: XmlPerceptionLine,
     moneda: string,
   ): void {

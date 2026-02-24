@@ -9,7 +9,7 @@ import type {
   XmlGuideData,
   XmlGuideItem,
 } from '../interfaces/xml-builder.interfaces.js';
-import { BaseXmlBuilder } from './base.builder.js';
+import { BaseXmlBuilder, type XmlNode } from './base.builder.js';
 
 /**
  * Builds the XML for Guía de Remisión Electrónica (tipo 09).
@@ -58,24 +58,24 @@ export class GuideBuilder extends BaseXmlBuilder {
       doc.ele('cbc:Note').txt(data.descripcionMotivo).up();
     }
 
-    // 7. Signature reference
-    this.addSignatureReference(doc, data.company.ruc);
-
-    // 8. Despatch supplier party (remitente)
-    this.addDespatchSupplierParty(doc, data);
-
-    // 9. Delivery customer party (destinatario)
-    this.addDeliveryCustomerParty(doc, data);
-
-    // 9.5. OrderReference (required when motivoTraslado='01' Venta)
+    // 7. AdditionalDocumentReference (must come before Signature per UBL 2.1 schema)
     if (data.docReferencia) {
       this.addOrderReference(doc, data);
     }
 
-    // 10. Shipment
+    // 8. Signature reference
+    this.addSignatureReference(doc, data.company.ruc);
+
+    // 9. Despatch supplier party (remitente)
+    this.addDespatchSupplierParty(doc, data);
+
+    // 10. Delivery customer party (destinatario)
+    this.addDeliveryCustomerParty(doc, data);
+
+    // 11. Shipment
     this.addShipment(doc, data);
 
-    // 11. Despatch lines
+    // 12. Despatch lines
     for (let i = 0; i < data.items.length; i++) {
       this.addDespatchLine(doc, data.items[i]!, i + 1);
     }
@@ -95,7 +95,7 @@ export class GuideBuilder extends BaseXmlBuilder {
     return doc;
   }
 
-  private addDespatchSupplierParty(doc: any, data: XmlGuideData): void {
+  private addDespatchSupplierParty(doc: XmlNode, data: XmlGuideData): void {
     const supplier = doc.ele('cac:DespatchSupplierParty');
     const party = supplier.ele('cac:Party');
 
@@ -118,7 +118,7 @@ export class GuideBuilder extends BaseXmlBuilder {
     supplier.up();
   }
 
-  private addDeliveryCustomerParty(doc: any, data: XmlGuideData): void {
+  private addDeliveryCustomerParty(doc: XmlNode, data: XmlGuideData): void {
     const customer = doc.ele('cac:DeliveryCustomerParty');
     const party = customer.ele('cac:Party');
 
@@ -141,7 +141,7 @@ export class GuideBuilder extends BaseXmlBuilder {
     customer.up();
   }
 
-  private addOrderReference(doc: any, data: XmlGuideData): void {
+  private addOrderReference(doc: XmlNode, data: XmlGuideData): void {
     if (!data.docReferencia) return;
 
     const ref = data.docReferencia;
@@ -159,7 +159,7 @@ export class GuideBuilder extends BaseXmlBuilder {
     orderRef.up();
   }
 
-  private addShipment(doc: any, data: XmlGuideData): void {
+  private addShipment(doc: XmlNode, data: XmlGuideData): void {
     const shipment = doc.ele('cac:Shipment');
 
     // Shipment ID (required, use "1" as per SUNAT)
@@ -235,7 +235,7 @@ export class GuideBuilder extends BaseXmlBuilder {
     shipment.up();
   }
 
-  private addShipmentStage(shipment: any, data: XmlGuideData): void {
+  private addShipmentStage(shipment: XmlNode, data: XmlGuideData): void {
     const stage = shipment.ele('cac:ShipmentStage');
 
     // Transport mode code (Cat 18)
@@ -300,7 +300,7 @@ export class GuideBuilder extends BaseXmlBuilder {
     stage.up();
   }
 
-  private addDespatchLine(doc: any, item: XmlGuideItem, lineNumber: number): void {
+  private addDespatchLine(doc: XmlNode, item: XmlGuideItem, lineNumber: number): void {
     const line = doc.ele('cac:DespatchLine');
 
     line.ele('cbc:ID').txt(lineNumber.toString()).up();

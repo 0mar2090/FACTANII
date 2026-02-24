@@ -318,7 +318,7 @@ export interface XmlGuideData {
     numDoc: string;
     nombres: string;
     apellidos: string;
-    licencia: string;
+    licencia?: string;
   };
   vehiculo?: {
     placa: string;
