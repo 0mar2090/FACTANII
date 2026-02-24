@@ -140,9 +140,11 @@ export function calculateItemTaxes(input: ItemCalcInput): ItemCalcResult {
       case '02': // Específico (monto fijo por unidad)
         isc = round2(cantidad * (input.montoFijoISC ?? 0));
         break;
-      case '03': // Al Valor según precio de venta al público
-        isc = round2(valorVenta * (input.tasaISC ?? 0));
+      case '03': { // Al Valor según precio de venta al público
+        const tasa = input.tasaISC ?? 0;
+        isc = tasa > 0 ? round2(valorVenta * tasa / (1 + tasa)) : 0;
         break;
+      }
     }
   }
 

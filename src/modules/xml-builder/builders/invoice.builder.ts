@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import { create } from 'xmlbuilder2';
-import { UBL_NAMESPACES, LEYENDA, TIPO_OPERACION } from '../../../common/constants/index.js';
+import { UBL_NAMESPACES, LEYENDA } from '../../../common/constants/index.js';
 import type { XmlInvoiceData } from '../interfaces/xml-builder.interfaces.js';
 import { BaseXmlBuilder } from './base.builder.js';
 
@@ -86,9 +86,9 @@ export class InvoiceBuilder extends BaseXmlBuilder {
         'Operación sujeta al Sistema de Pago de Obligaciones Tributarias con el Gobierno Central');
     }
 
-    // Legend for percepción
-    if (data.tipoOperacion === TIPO_OPERACION.PERCEPCION) {
-      this.addLegend(doc, LEYENDA.OPERACION_PERCEPCION, 'Comprobante de Percepción');
+    // Legend for IVAP operations
+    if (data.opIvap && data.opIvap > 0) {
+      this.addLegend(doc, LEYENDA.OPERACION_IVAP, 'Operación sujeta al Impuesto a la Venta de Arroz Pilado');
     }
 
     // Legend for ICBPER
