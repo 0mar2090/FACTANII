@@ -70,4 +70,10 @@ export class InvoiceItemDto {
   @IsOptional()
   @Min(0)
   cantidadBolsasPlastico?: number; // for ICBPER
+
+  /** Valor referencial unitario — obligatorio para operaciones gratuitas */
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  valorReferencial?: number;
 }
