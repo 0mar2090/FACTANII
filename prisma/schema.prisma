@@ -191,6 +191,19 @@ model Invoice {
   docRefCorrelativo Int?    @map("doc_ref_correlativo")
   motivoNota        String? @map("motivo_nota")
 
+  // Detracción (SPOT)
+  codigoDetraccion      String?  @map("codigo_detraccion")
+  porcentajeDetraccion  Decimal? @map("porcentaje_detraccion") @db.Decimal(5, 4)
+  montoDetraccion       Decimal? @map("monto_detraccion") @db.Decimal(12, 2)
+  cuentaDetraccion      String?  @map("cuenta_detraccion")
+
+  // Anticipos y documentos relacionados (JSON)
+  anticiposData         Json?    @map("anticipos_data")
+  docsRelacionadosData  Json?    @map("docs_relacionados_data")
+
+  // Exportación
+  opExportacion         Decimal  @default(0) @map("op_exportacion") @db.Decimal(12, 2)
+
   // XML
   xmlContent String?  @map("xml_content")
   xmlHash    String?  @map("xml_hash")
