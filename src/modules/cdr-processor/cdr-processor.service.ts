@@ -90,7 +90,9 @@ export class CdrProcessorService {
     try {
       parsed = this.parser.parse(rawXml);
     } catch (error: any) {
-      throw new Error(`Failed to parse CDR XML: ${error.message}`);
+      const snippet = rawXml.substring(0, 500);
+      this.logger.error(`CDR XML parse failed. Snippet: ${snippet}`);
+      throw new Error(`Failed to parse CDR XML: ${error.message}. Raw length: ${rawXml.length} bytes`);
     }
 
     // Navigate the CDR structure — namespace prefixes already removed
@@ -117,7 +119,7 @@ export class CdrProcessorService {
     // - Codes 0100-1999: accepted with informational/observation messages
     // - Codes >= 2000: rejected
     const numericCode = /^\d+$/.test(responseCode) ? parseInt(responseCode, 10) : -1;
-    const isAccepted = numericCode >= 0 && numericCode < 2000;
+    const isAccepted = numericCode === 0 || (numericCode >= 100 && numericCode < 2000);
     const hasObservations = isAccepted && (notes.length > 0 || numericCode >= 100);
 
     this.logger.log(

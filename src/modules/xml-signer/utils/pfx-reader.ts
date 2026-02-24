@@ -61,6 +61,14 @@ export function readPfx(pfxBuffer: Buffer, passphrase: string): PfxKeyPair {
 
   const certificate = certs[0].cert;
 
+  // 4b. Check certificate expiry
+  const now = new Date();
+  if (certificate.validity.notAfter < now) {
+    throw new Error(
+      `Certificate expired on ${certificate.validity.notAfter.toISOString()}. Please upload a new certificate.`,
+    );
+  }
+
   // 5. Convert private key to PEM format
   const privateKeyPem = forge.pki.privateKeyToPem(privateKey);
 

@@ -244,4 +244,30 @@ export class InvoicesController {
     const result = await this.invoicesService.resend(companyId, id);
     return { success: true, data: result };
   }
+
+  @Get(':id/consult-cdr')
+  @ApiOperation({ summary: 'Consult CDR from SUNAT for a document (production only)' })
+  @ApiResponse({ status: 200, description: 'CDR consultation result' })
+  @ApiResponse({ status: 404, description: 'Invoice not found' })
+  async consultCdr(
+    @Tenant() companyId: string,
+    @Param('id') id: string,
+  ) {
+    const result = await this.invoicesService.consultCdr(companyId, id);
+    return { success: true, data: result };
+  }
+
+  @Post(':id/anular-guia')
+  @ApiOperation({ summary: 'Annul a Guía de Remisión (09) via SUNAT GRE API' })
+  @ApiResponse({ status: 200, description: 'Guide annulment result' })
+  @ApiResponse({ status: 400, description: 'Document is not a GRE or cannot be annulled' })
+  @ApiResponse({ status: 404, description: 'Invoice not found' })
+  async anularGuia(
+    @Tenant() companyId: string,
+    @Param('id') id: string,
+    @Body('motivo') motivo: string,
+  ) {
+    const result = await this.invoicesService.anularGuia(companyId, id, motivo);
+    return { success: true, data: result };
+  }
 }

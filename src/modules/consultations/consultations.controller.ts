@@ -1,12 +1,16 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { ConsultationsService } from './consultations.service.js';
+import { SunatClientService } from '../sunat-client/sunat-client.service.js';
 import { Public } from '../../common/decorators/public.decorator.js';
 
 @ApiTags('Consultas')
 @Controller('consultas')
 export class ConsultationsController {
-  constructor(private readonly consultationsService: ConsultationsService) {}
+  constructor(
+    private readonly consultationsService: ConsultationsService,
+    private readonly sunatClient: SunatClientService,
+  ) {}
 
   @Get('ruc/:ruc')
   @Public()
@@ -44,5 +48,39 @@ export class ConsultationsController {
   async getTipoCambio(@Query('fecha') fecha?: string) {
     const data = await this.consultationsService.getTipoCambio(fecha);
     return { success: true, data };
+  }
+
+  @Get('validar-cpe')
+  @Public()
+  @ApiOperation({ summary: 'Validar CPE en SUNAT (producción)' })
+  @ApiQuery({ name: 'ruc', required: true, description: 'RUC del emisor (11 dígitos)' })
+  @ApiQuery({ name: 'tipoDoc', required: true, description: 'Tipo de documento: 01, 03, 07, 08' })
+  @ApiQuery({ name: 'serie', required: true, description: 'Serie del documento (ej: F001)' })
+  @ApiQuery({ name: 'correlativo', required: true, description: 'Correlativo del documento' })
+  @ApiQuery({ name: 'fechaEmision', required: true, description: 'Fecha de emisión (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'monto', required: true, description: 'Monto total del documento' })
+  @ApiResponse({ status: 200, description: 'Resultado de validación' })
+  @ApiResponse({ status: 400, description: 'Parámetros inválidos' })
+  async validarCpe(
+    @Query('ruc') ruc: string,
+    @Query('tipoDoc') tipoDoc: string,
+    @Query('serie') serie: string,
+    @Query('correlativo') correlativo: string,
+    @Query('fechaEmision') fechaEmision: string,
+    @Query('monto') monto: string,
+  ) {
+    if (!ruc || !tipoDoc || !serie || !correlativo || !fechaEmision || !monto) {
+      throw new BadRequestException('All parameters are required: ruc, tipoDoc, serie, correlativo, fechaEmision, monto');
+    }
+
+    const result = await this.sunatClient.validateCpe(
+      ruc,
+      tipoDoc,
+      serie,
+      parseInt(correlativo, 10),
+      fechaEmision,
+      parseFloat(monto),
+    );
+    return { success: true, data: result };
   }
 }

@@ -6,22 +6,29 @@ import {
   IsDateString,
   IsNumber,
   IsInt,
+  IsBoolean,
   ArrayMinSize,
   MaxLength,
+  MinLength,
   Min,
   IsIn,
   IsObject,
+  IsNotEmpty,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class GuideAddressDto {
   /** Ubigeo (6 dígitos) */
   @IsString()
+  @MinLength(6)
   @MaxLength(6)
+  @Matches(/^\d{6}$/, { message: 'UBIGEO must be exactly 6 digits' })
   ubigeo: string;
 
   /** Dirección completa */
   @IsString()
+  @IsNotEmpty()
   @MaxLength(500)
   direccion: string;
 }
@@ -45,6 +52,11 @@ export class GuideTransportistaDto {
   @IsString()
   @IsOptional()
   registroMTC?: string;
+
+  /** Indicador de subcontratación */
+  @IsBoolean()
+  @IsOptional()
+  subcontratacion?: boolean;
 }
 
 export class GuideConductorDto {
@@ -85,6 +97,12 @@ export class GuideVehiculoDto {
   @IsOptional()
   @MaxLength(10)
   placaSecundaria?: string;
+
+  /** Transport equipment type code (M1, M1L, etc.) */
+  @IsString()
+  @IsOptional()
+  @MaxLength(10)
+  tipoEquipo?: string;
 }
 
 export class GuideItemDto {
@@ -207,10 +225,23 @@ export class CreateGuideDto {
   @Type(() => GuideConductorDto)
   conductor?: GuideConductorDto;
 
+  /** Multiple conductores (takes precedence over singular conductor) */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GuideConductorDto)
+  conductores?: GuideConductorDto[];
+
   @IsOptional()
   @ValidateNested()
   @Type(() => GuideVehiculoDto)
   vehiculo?: GuideVehiculoDto;
+
+  /** Número de autorización especial (mercancías peligrosas, etc.) */
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  autorizacionEspecial?: string;
 
   // --- Items ---
 

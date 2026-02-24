@@ -7,6 +7,7 @@ import {
   isInafecto,
   isExportacion,
   isGratuita,
+  isIvap,
   calculateItemTaxes,
   calculateInvoiceTotals,
 } from './tax-calculator.js';
@@ -82,6 +83,7 @@ describe('isGratuita', () => {
     expect(isGratuita('11')).toBe(true); // retiro premio
     expect(isGratuita('12')).toBe(true); // retiro donación
     expect(isGratuita('15')).toBe(true); // bonificación
+    expect(isGratuita('16')).toBe(true); // retiro entrega trabajadores
     expect(isGratuita('21')).toBe(true); // exonerado transferencia gratuita
     expect(isGratuita('31')).toBe(true); // inafecto retiro bonificación
   });
@@ -90,6 +92,22 @@ describe('isGratuita', () => {
     expect(isGratuita('10')).toBe(false); // gravado onerosa
     expect(isGratuita('20')).toBe(false); // exonerado onerosa
     expect(isGratuita('30')).toBe(false); // inafecto onerosa
+  });
+
+  it('returns false for IVAP (tipo 17) — IVAP is oneroso, not gratuita', () => {
+    expect(isGratuita('17')).toBe(false);
+  });
+});
+
+describe('isIvap', () => {
+  it('returns true only for tipo 17', () => {
+    expect(isIvap('17')).toBe(true);
+  });
+
+  it('returns false for other gravado types', () => {
+    expect(isIvap('10')).toBe(false);
+    expect(isIvap('11')).toBe(false);
+    expect(isIvap('16')).toBe(false);
   });
 });
 
@@ -171,6 +189,20 @@ describe('calculateItemTaxes', () => {
     expect(result.isc).toBe(20);
     expect(result.igv).toBe(21.6);
   });
+
+  it('calculates IVAP at 4% for tipo 17 (not 18%)', () => {
+    const result = calculateItemTaxes({
+      cantidad: 1,
+      valorUnitario: 100,
+      tipoAfectacion: '17',
+    });
+
+    // IVAP = 100 * 0.04 = 4, NOT 100 * 0.18 = 18
+    expect(result.igv).toBe(4);
+    expect(result.precioUnitario).toBe(104); // 100 * 1.04
+    expect(result.valorVenta).toBe(100);
+    expect(result.totalItem).toBe(104); // 100 + 4
+  });
 });
 
 describe('calculateInvoiceTotals', () => {
@@ -195,7 +227,7 @@ describe('calculateInvoiceTotals', () => {
     expect(totals.totalVenta).toBe(198);
   });
 
-  it('applies descuento global', () => {
+  it('applies descuento global with IGV recalculation on net base', () => {
     const items = [
       calculateItemTaxes({ cantidad: 1, valorUnitario: 100, tipoAfectacion: '10' }),
     ];
@@ -206,9 +238,13 @@ describe('calculateInvoiceTotals', () => {
       descuentoGlobal: 10,
     });
 
-    // totalVenta = 100 + 18 - 10 = 108
+    // opGravadas after discount: 100 - 10 = 90
+    // IGV recalculated: 90 * 0.18 = 16.2
+    // totalVenta = 90 + 16.2 - 10 = 96.2
     expect(totals.descuentoGlobal).toBe(10);
-    expect(totals.totalVenta).toBe(108);
+    expect(totals.opGravadas).toBe(90);
+    expect(totals.igv).toBe(16.2);
+    expect(totals.totalVenta).toBe(96.2);
   });
 
   it('applies otros cargos', () => {
@@ -227,7 +263,7 @@ describe('calculateInvoiceTotals', () => {
     expect(totals.totalVenta).toBe(123);
   });
 
-  it('handles gratuita items (excluded from totalVenta)', () => {
+  it('handles gratuita items — IGV not included in totalVenta', () => {
     const items = [
       calculateItemTaxes({ cantidad: 1, valorUnitario: 100, tipoAfectacion: '10' }),
       calculateItemTaxes({ cantidad: 1, valorUnitario: 50, tipoAfectacion: '11' }), // gratuita
@@ -240,8 +276,29 @@ describe('calculateInvoiceTotals', () => {
 
     expect(totals.opGravadas).toBe(100);
     expect(totals.opGratuitas).toBe(50);
-    // Gratuitas still have IGV calculated but they don't add to opGravadas
-    // totalVenta should be based on non-gratuita items
-    expect(totals.totalVenta).toBe(round2(100 + totals.igv + totals.isc + totals.icbper));
+    // IGV only from oneroso item (100 * 0.18 = 18)
+    expect(totals.igv).toBe(18);
+    // IGV from gratuita item (50 * 0.18 = 9) tracked separately
+    expect(totals.igvGratuitas).toBe(9);
+    // totalVenta = opGravadas + igv = 100 + 18 = 118 (no gratuita IGV)
+    expect(totals.totalVenta).toBe(118);
+  });
+
+  it('IVAP item (tipo 17) is NOT gratuita — contributes to opGravadas and totalVenta', () => {
+    const items = [
+      calculateItemTaxes({ cantidad: 1, valorUnitario: 100, tipoAfectacion: '17' }), // IVAP
+    ];
+
+    const totals = calculateInvoiceTotals({
+      items,
+      tiposAfectacion: ['17'],
+    });
+
+    expect(totals.opGravadas).toBe(100);
+    expect(totals.opGratuitas).toBe(0);
+    expect(totals.igv).toBe(4); // 100 * 0.04 IVAP rate
+    expect(totals.igvGratuitas).toBe(0);
+    // totalVenta = 100 + 4 = 104
+    expect(totals.totalVenta).toBe(104);
   });
 });

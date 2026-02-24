@@ -82,10 +82,14 @@ export class SunatClientService {
     try {
       const client = await this.createSoapClient(wsdlUrl, soapUser, solPass, endpointType);
 
+      this.logger.debug(`SOAP sendBill: sending ${zipFileName} to ${wsdlUrl}`);
+
       const [result] = await client.sendBillAsync({
         fileName: zipFileName,
         contentFile: zipBuffer.toString('base64'),
       });
+
+      this.logger.debug(`SOAP sendBill: response received for ${zipFileName}`);
 
       // SUNAT returns the CDR as base64 in applicationResponse
       const applicationResponse = result?.applicationResponse;
@@ -153,10 +157,14 @@ export class SunatClientService {
     try {
       const client = await this.createSoapClient(wsdlUrl, soapUser, solPass);
 
+      this.logger.debug(`SOAP sendSummary: sending ${zipFileName} to ${wsdlUrl}`);
+
       const [result] = await client.sendSummaryAsync({
         fileName: zipFileName,
         contentFile: zipBuffer.toString('base64'),
       });
+
+      this.logger.debug(`SOAP sendSummary: response received for ${zipFileName}`);
 
       const ticket = result?.ticket;
 
@@ -217,9 +225,13 @@ export class SunatClientService {
     try {
       const client = await this.createSoapClient(wsdlUrl, soapUser, solPass);
 
+      this.logger.debug(`SOAP getStatus: sending ticket=${ticket} to ${wsdlUrl}`);
+
       const [result] = await client.getStatusAsync({
         ticket,
       });
+
+      this.logger.debug(`SOAP getStatus: response received for ticket=${ticket}`);
 
       const statusResponse = result?.status;
 
@@ -286,6 +298,137 @@ export class SunatClientService {
     }
   }
 
+  /**
+   * Consult the CDR (Constancia de Recepción) for a previously sent document.
+   *
+   * Used to re-download the CDR when the original response was lost, or
+   * to verify the current status of a document in SUNAT's system.
+   *
+   * Only available in production environment.
+   * SOAP operation: `getStatusCdr` on `billConsultService`.
+   *
+   * @param ruc         - Company RUC
+   * @param tipoDoc     - Document type code (01, 03, 07, 08, 20, 40)
+   * @param serie       - Document series
+   * @param correlativo - Document number
+   * @param solUser     - SOL username
+   * @param solPass     - SOL password
+   * @param isBeta      - Environment flag (beta has no consult endpoint)
+   */
+  async consultCdr(
+    ruc: string,
+    tipoDoc: string,
+    serie: string,
+    correlativo: number,
+    solUser: string,
+    solPass: string,
+    isBeta: boolean,
+  ): Promise<SunatSendResult> {
+    const endpoints = this.resolveEndpoints(isBeta);
+
+    if (!endpoints.consultCdr) {
+      return {
+        success: false,
+        message: 'CDR consultation is only available in production environment',
+      };
+    }
+
+    const soapUser = `${ruc}${solUser}`;
+
+    this.logger.log(
+      `consultCdr: ruc=${ruc}, doc=${tipoDoc}-${serie}-${correlativo}, env=${isBeta ? 'beta' : 'prod'}`,
+    );
+
+    try {
+      const client = await this.createSoapClient(endpoints.consultCdr, soapUser, solPass);
+
+      const [result] = await client.getStatusCdrAsync({
+        rucComprobante: ruc,
+        tipoComprobante: tipoDoc,
+        serieComprobante: serie,
+        numeroComprobante: correlativo,
+      });
+
+      const statusCdr = result?.statusCdr;
+      const content = statusCdr?.content;
+      const statusCode = statusCdr?.statusCode?.toString();
+      const statusMessage = statusCdr?.statusMessage;
+
+      if (content) {
+        const cdrZip = Buffer.from(content, 'base64');
+        this.logger.log(
+          `consultCdr: CDR received for ${tipoDoc}-${serie}-${correlativo} (${cdrZip.length} bytes)`,
+        );
+
+        return {
+          success: true,
+          cdrZip,
+          code: statusCode,
+          message: statusMessage,
+        };
+      }
+
+      return {
+        success: false,
+        code: statusCode,
+        message: statusMessage ?? 'No CDR content returned',
+      };
+    } catch (error: unknown) {
+      return this.handleSoapError('consultCdr', `${tipoDoc}-${serie}-${correlativo}`, error);
+    }
+  }
+
+  /**
+   * Validate a CPE document against SUNAT's records.
+   *
+   * Used to verify that a document exists and is valid in SUNAT's system.
+   * Only available in production environment.
+   * SOAP operation: `validaCDPcriterios` on `billValidService`.
+   */
+  async validateCpe(
+    ruc: string,
+    tipoDoc: string,
+    serie: string,
+    correlativo: number,
+    fechaEmision: string,
+    monto: number,
+  ): Promise<{ valid: boolean; message: string }> {
+    const endpoints = this.resolveEndpoints(false); // Always production
+
+    if (!endpoints.consultValid) {
+      return { valid: false, message: 'CPE validation is only available in production environment' };
+    }
+
+    this.logger.log(
+      `validateCpe: ruc=${ruc}, doc=${tipoDoc}-${serie}-${correlativo}`,
+    );
+
+    try {
+      const client = await soap.createClientAsync(endpoints.consultValid, {} as any);
+
+      const [result] = await client.validaCDPcriteriosAsync({
+        rucEmisor: ruc,
+        codComp: tipoDoc,
+        numeroSerie: serie,
+        numero: correlativo,
+        fechaEmision,
+        monto: monto.toFixed(2),
+      });
+
+      const statusCode = result?.statusCode?.toString();
+      const statusMessage = result?.statusMessage;
+
+      return {
+        valid: statusCode === '0',
+        message: statusMessage ?? `Status code: ${statusCode}`,
+      };
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`validateCpe: error — ${msg}`);
+      return { valid: false, message: `Validation error: ${msg}` };
+    }
+  }
+
   // ───────────────────────────────────────────
   // Private helpers
   // ───────────────────────────────────────────
@@ -327,7 +470,8 @@ export class SunatClientService {
     } as any);
 
     // WS-Security: username = {RUC}{SOLUser} (e.g. "20000000001MODDATOS")
-    client.setSecurity(new soap.WSSecurity(soapUser, soapPass));
+    // hasTimeStamp adds wsu:Timestamp to the SOAP header, required by SUNAT
+    client.setSecurity(new soap.WSSecurity(soapUser, soapPass, { hasTimeStamp: true }));
 
     // Override endpoint to the actual SUNAT service URL (strip ?wsdl)
     const serviceUrl = wsdlUrl.replace('?wsdl', '');
@@ -370,14 +514,19 @@ export class SunatClientService {
     const faultCode = soapError?.root?.Envelope?.Body?.Fault?.faultcode;
     const faultString = soapError?.root?.Envelope?.Body?.Fault?.faultstring;
 
-    // Some SOAP faults include a SUNAT-specific code in the detail
+    // Some SOAP faults include a SUNAT-specific code in the detail.
+    // SUNAT uses different field names across error scenarios, so check all known variants.
     const detail = soapError?.root?.Envelope?.Body?.Fault?.detail;
-    const sunatCode = detail?.code ?? detail?.codigoError;
-    const sunatMessage = detail?.message ?? detail?.mensajeError ?? faultString;
+    const sunatCode = detail?.code ?? detail?.codigoError ?? detail?.codigoRespuesta ?? undefined;
+    const sunatMessage = detail?.message ?? detail?.mensajeError ?? detail?.description ?? faultString ?? 'Unknown SOAP error';
 
     if (faultCode || faultString) {
+      const fault = soapError?.root?.Envelope?.Body?.Fault;
       this.logger.error(
         `${operation}: SOAP fault for ${fileName} — code=${faultCode}, message=${faultString}`,
+      );
+      this.logger.error(
+        `SOAP ${operation} fault for ${fileName}: ${JSON.stringify(fault).substring(0, 500)}`,
       );
 
       return {

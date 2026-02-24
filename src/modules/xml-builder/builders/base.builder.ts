@@ -384,8 +384,8 @@ export abstract class BaseXmlBuilder {
       .txt(categoryId)
     .up();
 
-    // Tax percentage — IGV is 18%, others emit 0%
-    const taxPercent = tributo.code === CODIGO_TRIBUTO.IGV.code ? IGV_RATE * 100 : 0;
+    // Tax percentage — resolve based on tributo type
+    const taxPercent = this.resolveTaxPercent(tributo.code, taxableAmount, taxAmount);
     taxCategory.ele('cbc:Percent').txt(taxPercent.toFixed(2)).up();
 
     const taxScheme = taxCategory.ele('cac:TaxScheme');
@@ -400,6 +400,31 @@ export abstract class BaseXmlBuilder {
 
     taxCategory.up();
     subtotal.up();
+  }
+
+  /**
+   * Resolve the tax percent based on the tributo code.
+   *
+   * - IGV (1000): 18%
+   * - IVAP (1016): 4%
+   * - ISC (2000): derived from taxAmount / taxableAmount if possible, else 0%
+   * - All others: 0%
+   */
+  protected resolveTaxPercent(tributoCode: string, taxableAmount: number, taxAmount: number): number {
+    if (tributoCode === CODIGO_TRIBUTO.IGV.code) {
+      return IGV_RATE * 100;
+    }
+    if (tributoCode === CODIGO_TRIBUTO.IVAP?.code) {
+      return 4;
+    }
+    if (tributoCode === CODIGO_TRIBUTO.ISC.code) {
+      // Derive ISC rate from amounts when possible
+      if (taxableAmount > 0 && taxAmount > 0) {
+        return Math.round((taxAmount / taxableAmount) * 10000) / 100;
+      }
+      return 0;
+    }
+    return 0;
   }
 
   /**

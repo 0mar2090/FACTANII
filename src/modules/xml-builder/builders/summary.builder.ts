@@ -262,6 +262,16 @@ export class SummaryBuilder extends BaseXmlBuilder {
       .up();
 
     const taxCategory = subtotal.ele('cac:TaxCategory');
+
+    // Resolve TaxCategory ID and Percent based on tributo code
+    const { categoryId, percent } = this.resolveSummaryTaxCategoryId(tributo.code);
+    taxCategory.ele('cbc:ID')
+      .att('schemeID', 'UN/ECE 5305')
+      .att('schemeAgencyID', '6')
+      .txt(categoryId)
+    .up();
+    taxCategory.ele('cbc:Percent').txt(percent).up();
+
     const taxScheme = taxCategory.ele('cac:TaxScheme');
     taxScheme.ele('cbc:ID').txt(tributo.code).up();
     taxScheme.ele('cbc:Name').txt(tributo.name).up();
@@ -269,5 +279,34 @@ export class SummaryBuilder extends BaseXmlBuilder {
     taxScheme.up();
     taxCategory.up();
     subtotal.up();
+  }
+
+  /**
+   * Resolve TaxCategory ID and Percent for summary documents based on tributo code.
+   *
+   * Mapping:
+   * - 1000 (IGV) → 'S', 18.00%
+   * - 1016 (IVAP) → 'S', 4.00%
+   * - 9995 (Exportación) → 'G', 0.00%
+   * - 9996 (Gratuita) → 'Z', 0.00%
+   * - 9997 (Exonerado) → 'E', 0.00%
+   * - 9998 (Inafecto) → 'O', 0.00%
+   * - 2000 (ISC) → 'S', 0.00%
+   * - 7152 (ICBPER) → 'O', 0.00%
+   * - 9999 (Otros) → 'S', 0.00%
+   */
+  private resolveSummaryTaxCategoryId(tributoCode: string): { categoryId: string; percent: string } {
+    switch (tributoCode) {
+      case '1000': return { categoryId: 'S', percent: '18.00' };
+      case '1016': return { categoryId: 'S', percent: '4.00' };
+      case '9995': return { categoryId: 'G', percent: '0.00' };
+      case '9996': return { categoryId: 'Z', percent: '0.00' };
+      case '9997': return { categoryId: 'E', percent: '0.00' };
+      case '9998': return { categoryId: 'O', percent: '0.00' };
+      case '2000': return { categoryId: 'S', percent: '0.00' };
+      case '7152': return { categoryId: 'O', percent: '0.00' };
+      case '9999': return { categoryId: 'S', percent: '0.00' };
+      default:     return { categoryId: 'S', percent: '0.00' };
+    }
   }
 }

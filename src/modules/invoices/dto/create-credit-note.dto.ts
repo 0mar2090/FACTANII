@@ -2,6 +2,7 @@ import {
   IsString,
   IsOptional,
   IsArray,
+  IsNumber,
   ValidateNested,
   IsDateString,
   IsInt,
@@ -10,6 +11,7 @@ import {
   Min,
   IsIn,
   IsNotEmpty,
+  IsEmail,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { InvoiceItemDto } from './invoice-item.dto.js';
@@ -51,6 +53,12 @@ export class CreateCreditNoteDto {
   @MaxLength(500)
   motivoDescripcion: string;
 
+  /** Monto total del documento original (for motivo 13 balance validation) */
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  montoOriginal?: number;
+
   // --- Client ---
 
   @IsString()
@@ -71,7 +79,7 @@ export class CreateCreditNoteDto {
   @IsOptional()
   clienteDireccion?: string;
 
-  @IsString()
+  @IsEmail()
   @IsOptional()
   clienteEmail?: string;
 

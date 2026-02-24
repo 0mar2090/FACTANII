@@ -36,13 +36,16 @@ export class CreditNoteBuilder extends BaseXmlBuilder {
     // 2. UBL version identifiers
     this.addUblVersions(doc);
 
+    // 2b. Profile ID
+    doc.ele('cbc:ProfileID').txt(data.tipoOperacion ?? '0101').up();
+
     // 3. Document identification
     const documentId = this.formatDocumentId(data.serie, data.correlativo);
     doc.ele('cbc:ID').txt(documentId).up();
 
     // 4. Issue date and time
     doc.ele('cbc:IssueDate').txt(data.fechaEmision).up();
-    doc.ele('cbc:IssueTime').txt('00:00:00').up();
+    doc.ele('cbc:IssueTime').txt(data.horaEmision ?? '00:00:00').up();
 
     // 5. Legends
     this.addLegend(doc, LEYENDA.MONTO_EN_LETRAS, data.montoEnLetras);

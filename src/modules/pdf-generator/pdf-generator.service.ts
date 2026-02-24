@@ -115,7 +115,7 @@ export class PdfGeneratorService {
       data.fechaEmision,
       data.clienteTipoDoc,
       data.clienteNumDoc,
-      data.xmlHash ?? '',
+      data.digestValue ?? data.xmlHash ?? '',
     ].join('|');
 
     try {

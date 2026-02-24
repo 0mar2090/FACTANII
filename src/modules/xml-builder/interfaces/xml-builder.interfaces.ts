@@ -62,6 +62,36 @@ export interface XmlPaymentTerms {
 }
 
 /**
+ * Datos de detracción (SPOT) para el XML.
+ */
+export interface XmlDetraccion {
+  codigo: string;       // Catálogo 54
+  porcentaje: number;   // e.g. 0.12 for 12%
+  monto: number;        // Monto de la detracción
+  cuentaBN: string;     // Cuenta del Banco de la Nación
+}
+
+/**
+ * Anticipo aplicado al comprobante.
+ */
+export interface XmlAnticipo {
+  tipoDoc: string;
+  serie: string;
+  correlativo: number;
+  moneda: string;
+  monto: number;
+  fechaPago: string;     // YYYY-MM-DD
+}
+
+/**
+ * Documento relacionado (OC, Guía, etc.)
+ */
+export interface XmlDocumentoRelacionado {
+  tipoDoc: string;      // Tipo de documento relacionado
+  numero: string;       // Serie-Correlativo
+}
+
+/**
  * Datos de entrada para construir XML de Factura (01) o Boleta (03).
  */
 export interface XmlInvoiceData {
@@ -70,6 +100,7 @@ export interface XmlInvoiceData {
   correlativo: number;
   tipoOperacion: string; // Catalogo 51
   fechaEmision: string;  // YYYY-MM-DD
+  horaEmision?: string;  // HH:MM:SS (defaults to '00:00:00')
   fechaVencimiento?: string;
   moneda: string;        // PEN, USD
 
@@ -92,6 +123,18 @@ export interface XmlInvoiceData {
   // Pago
   formaPago: XmlPaymentTerms;
 
+  // Detracción (SPOT) — obligatorio para facturas > S/700 de servicios
+  detraccion?: XmlDetraccion;
+
+  // Anticipos
+  anticipos?: XmlAnticipo[];
+
+  // Documentos relacionados (OC, Guía, etc.)
+  documentosRelacionados?: XmlDocumentoRelacionado[];
+
+  // Contingencia: referencia al documento físico emitido en contingencia
+  orderReferenceId?: string;
+
   // Leyendas
   montoEnLetras: string;
 }
@@ -103,6 +146,8 @@ export interface XmlCreditNoteData {
   serie: string;
   correlativo: number;
   fechaEmision: string;
+  horaEmision?: string;  // HH:MM:SS (defaults to '00:00:00')
+  tipoOperacion?: string; // Defaults to '0101'
   moneda: string;
 
   // Documento de referencia
@@ -312,7 +357,10 @@ export interface XmlGuideData {
     numDoc: string;
     nombre: string;
     registroMTC?: string;
+    /** Indicador de subcontratación */
+    subcontratacion?: boolean;
   };
+  /** Single conductor (backward-compatible) */
   conductor?: {
     tipoDoc: string;
     numDoc: string;
@@ -320,10 +368,22 @@ export interface XmlGuideData {
     apellidos: string;
     licencia?: string;
   };
+  /** Multiple conductores (takes precedence over singular conductor) */
+  conductores?: Array<{
+    tipoDoc: string;
+    numDoc: string;
+    nombres: string;
+    apellidos: string;
+    licencia?: string;
+  }>;
   vehiculo?: {
     placa: string;
     placaSecundaria?: string;
+    /** Transport equipment type code (M1, M1L, etc.) */
+    tipoEquipo?: string;
   };
+  /** Número de autorización especial (mercancías peligrosas, etc.) */
+  autorizacionEspecial?: string;
   items: XmlGuideItem[];
 }
 
@@ -334,6 +394,8 @@ export interface XmlDebitNoteData {
   serie: string;
   correlativo: number;
   fechaEmision: string;
+  horaEmision?: string;  // HH:MM:SS (defaults to '00:00:00')
+  tipoOperacion?: string; // Defaults to '0101'
   moneda: string;
 
   // Documento de referencia

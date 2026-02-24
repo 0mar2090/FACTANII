@@ -58,6 +58,8 @@ export interface PdfInvoiceData {
   qrDataUri?: string;
   /** SHA-256 hash of the signed XML (shown as "Valor resumen") */
   xmlHash?: string;
+  /** DigestValue base64 from the XML digital signature (used in QR code) */
+  digestValue?: string;
   /** SUNAT response code, e.g. "0" for accepted */
   sunatCode?: string;
   /** SUNAT response message */

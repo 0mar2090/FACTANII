@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import { create } from 'xmlbuilder2';
-import { UBL_NAMESPACES, LEYENDA } from '../../../common/constants/index.js';
+import { UBL_NAMESPACES, LEYENDA, TIPO_OPERACION } from '../../../common/constants/index.js';
 import type { XmlInvoiceData } from '../interfaces/xml-builder.interfaces.js';
 import { BaseXmlBuilder } from './base.builder.js';
 
@@ -44,13 +44,16 @@ export class InvoiceBuilder extends BaseXmlBuilder {
     // 2. UBL version identifiers
     this.addUblVersions(doc);
 
+    // 2b. Profile ID
+    doc.ele('cbc:ProfileID').txt(data.tipoOperacion ?? '0101').up();
+
     // 3. Document identification
     const documentId = this.formatDocumentId(data.serie, data.correlativo);
     doc.ele('cbc:ID').txt(documentId).up();
 
     // 4. Issue date and time
     doc.ele('cbc:IssueDate').txt(data.fechaEmision).up();
-    doc.ele('cbc:IssueTime').txt('00:00:00').up();
+    doc.ele('cbc:IssueTime').txt(data.horaEmision ?? '00:00:00').up();
 
     // 5. Due date (optional)
     if (data.fechaVencimiento) {
@@ -77,6 +80,23 @@ export class InvoiceBuilder extends BaseXmlBuilder {
       this.addLegend(doc, LEYENDA.OPERACION_GRATUITA, 'TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE');
     }
 
+    // Legend for detracción (SPOT)
+    if (data.detraccion) {
+      this.addLegend(doc, LEYENDA.OPERACION_DETRACCION,
+        'Operación sujeta al Sistema de Pago de Obligaciones Tributarias con el Gobierno Central');
+    }
+
+    // Legend for percepción
+    if (data.tipoOperacion === TIPO_OPERACION.PERCEPCION) {
+      this.addLegend(doc, LEYENDA.OPERACION_PERCEPCION, 'Comprobante de Percepción');
+    }
+
+    // Legend for ICBPER
+    if (data.icbper > 0) {
+      this.addLegend(doc, LEYENDA.ICBPER,
+        'Incluye el Impuesto al Consumo de las Bolsas de Plástico');
+    }
+
     // 8. Document currency
     doc
       .ele('cbc:DocumentCurrencyCode')
@@ -89,6 +109,14 @@ export class InvoiceBuilder extends BaseXmlBuilder {
     // 9. Signature reference
     this.addSignatureReference(doc, data.company.ruc);
 
+    // 9b. OrderReference — contingencia (tipoOperacion '0401')
+    if (data.orderReferenceId) {
+      doc
+        .ele('cac:OrderReference')
+          .ele('cbc:ID').txt(data.orderReferenceId).up()
+        .up();
+    }
+
     // 10. Supplier (company)
     this.addCompanySupplier(doc, data.company);
 
@@ -97,6 +125,36 @@ export class InvoiceBuilder extends BaseXmlBuilder {
 
     // 12. Payment terms
     this.addPaymentTerms(doc, data);
+
+    // 12b. Detracción (SPOT) — PaymentMeans
+    if (data.detraccion) {
+      this.addDetraccion(doc, data);
+    }
+
+    // 12c. Anticipos (PrepaidPayment)
+    if (data.anticipos && data.anticipos.length > 0) {
+      for (const anticipo of data.anticipos) {
+        const prep = doc.ele('cac:PrepaidPayment');
+        prep.ele('cbc:ID').txt(`${anticipo.tipoDoc}-${anticipo.serie}-${anticipo.correlativo}`).up();
+        prep
+          .ele('cbc:PaidAmount')
+            .att('currencyID', anticipo.moneda)
+            .txt(this.formatAmount(anticipo.monto))
+          .up();
+        prep.ele('cbc:PaidDate').txt(anticipo.fechaPago).up();
+        prep.up();
+      }
+    }
+
+    // 12d. Documentos relacionados
+    if (data.documentosRelacionados && data.documentosRelacionados.length > 0) {
+      for (const docRef of data.documentosRelacionados) {
+        const addRef = doc.ele('cac:AdditionalDocumentReference');
+        addRef.ele('cbc:ID').txt(docRef.numero).up();
+        addRef.ele('cbc:DocumentTypeCode').txt(docRef.tipoDoc).up();
+        addRef.up();
+      }
+    }
 
     // 13. Global discount (if applicable)
     if (data.descuentoGlobal > 0) {
@@ -161,6 +219,40 @@ export class InvoiceBuilder extends BaseXmlBuilder {
     }
 
     return this.serializeXml(doc);
+  }
+
+  /**
+   * Add detracción (SPOT) payment means to the XML.
+   *
+   * SUNAT requires PaymentMeans with specific structure when tipoOperacion='1001'.
+   */
+  private addDetraccion(doc: XmlNode, data: XmlInvoiceData): void {
+    const det = data.detraccion!;
+
+    const paymentMeans = doc.ele('cac:PaymentMeans');
+    paymentMeans.ele('cbc:PaymentMeansCode')
+      .att('listAgencyName', 'PE:SUNAT')
+      .att('listName', 'Medio de pago')
+      .att('listURI', 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo59')
+      .txt('001')
+    .up();
+
+    const payeeAccount = paymentMeans.ele('cac:PayeeFinancialAccount');
+    payeeAccount.ele('cbc:ID').txt(det.cuentaBN).up();
+    payeeAccount.up();
+
+    paymentMeans.up();
+
+    const paymentTermsDet = doc.ele('cac:PaymentTerms');
+    paymentTermsDet.ele('cbc:ID').txt('Detraccion').up();
+    paymentTermsDet.ele('cbc:PaymentMeansID').txt(det.codigo).up();
+    paymentTermsDet.ele('cbc:PaymentPercent').txt((det.porcentaje * 100).toFixed(2)).up();
+    paymentTermsDet
+      .ele('cbc:Amount')
+        .att('currencyID', 'PEN')
+        .txt(this.formatAmount(det.monto))
+      .up();
+    paymentTermsDet.up();
   }
 
   /**

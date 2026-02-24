@@ -42,13 +42,16 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
     // 2. UBL version identifiers
     this.addUblVersions(doc);
 
+    // 2b. Profile ID
+    doc.ele('cbc:ProfileID').txt(data.tipoOperacion ?? '0101').up();
+
     // 3. Document identification
     const documentId = this.formatDocumentId(data.serie, data.correlativo);
     doc.ele('cbc:ID').txt(documentId).up();
 
     // 4. Issue date and time
     doc.ele('cbc:IssueDate').txt(data.fechaEmision).up();
-    doc.ele('cbc:IssueTime').txt('00:00:00').up();
+    doc.ele('cbc:IssueTime').txt(data.horaEmision ?? '00:00:00').up();
 
     // 5. Legends
     this.addLegend(doc, LEYENDA.MONTO_EN_LETRAS, data.montoEnLetras);
@@ -124,7 +127,19 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
       data.moneda,
     );
 
-    // 13. Legal monetary totals
+    // 13. Debit note lines (must come BEFORE RequestedMonetaryTotal per UBL 2.1)
+    for (let i = 0; i < data.items.length; i++) {
+      this.addDocumentLine(
+        doc,
+        data.items[i]!,
+        i + 1,
+        data.moneda,
+        'cac:DebitNoteLine',
+        'cbc:DebitedQuantity',
+      );
+    }
+
+    // 14. Legal monetary totals
     // Note: RequestedMonetaryTotal is used for DebitNote (same structure as LegalMonetaryTotal)
     this.addRequestedMonetaryTotal(
       doc,
@@ -137,18 +152,6 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
       data.totalVenta,
       data.moneda,
     );
-
-    // 14. Debit note lines
-    for (let i = 0; i < data.items.length; i++) {
-      this.addDocumentLine(
-        doc,
-        data.items[i]!,
-        i + 1,
-        data.moneda,
-        'cac:DebitNoteLine',
-        'cbc:DebitedQuantity',
-      );
-    }
 
     return this.serializeXml(doc);
   }

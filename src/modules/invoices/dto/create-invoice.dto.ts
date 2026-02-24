@@ -9,6 +9,7 @@ import {
   MaxLength,
   IsIn,
   IsNotEmpty,
+  IsEmail,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { InvoiceItemDto } from './invoice-item.dto.js';
@@ -74,7 +75,7 @@ export class CreateInvoiceDto {
   @IsOptional()
   clienteDireccion?: string;
 
-  @IsString()
+  @IsEmail()
   @IsOptional()
   clienteEmail?: string;
 
@@ -100,6 +101,48 @@ export class CreateInvoiceDto {
   @Type(() => PaymentInstallmentDto)
   cuotas?: PaymentInstallmentDto[];
 
+  // --- Detracción (SPOT) ---
+
+  @IsString()
+  @IsOptional()
+  codigoDetraccion?: string;
+
+  @IsNumber()
+  @IsOptional()
+  porcentajeDetraccion?: number;
+
+  @IsNumber()
+  @IsOptional()
+  montoDetraccion?: number;
+
+  @IsString()
+  @IsOptional()
+  cuentaDetraccion?: string;
+
+  // --- Anticipos ---
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => AnticipoItemDto)
+  anticipos?: AnticipoItemDto[];
+
+  // --- Documentos relacionados ---
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => DocRelacionadoDto)
+  documentosRelacionados?: DocRelacionadoDto[];
+
+  // --- Contingencia ---
+
+  /** Referencia al documento físico emitido en contingencia (para tipoOperacion '0401') */
+  @IsString()
+  @IsOptional()
+  @MaxLength(30)
+  orderReferenceId?: string;
+
   // --- Optional overrides ---
 
   @IsNumber()
@@ -109,4 +152,33 @@ export class CreateInvoiceDto {
   @IsNumber()
   @IsOptional()
   otrosCargos?: number;
+}
+
+export class AnticipoItemDto {
+  @IsString()
+  tipoDoc: string;
+
+  @IsString()
+  serie: string;
+
+  @IsNumber()
+  correlativo: number;
+
+  @IsString()
+  @IsOptional()
+  moneda?: string;
+
+  @IsNumber()
+  monto: number;
+
+  @IsDateString()
+  fechaPago: string;
+}
+
+export class DocRelacionadoDto {
+  @IsString()
+  tipoDoc: string;
+
+  @IsString()
+  numero: string;
 }

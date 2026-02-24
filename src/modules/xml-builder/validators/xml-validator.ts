@@ -17,8 +17,9 @@ import {
   IGV_RATE,
   MAX_DAYS_TO_SEND,
   MAX_DAYS_BY_DOC_TYPE,
+  CODIGO_DETRACCION,
 } from '../../../common/constants/index.js';
-import { round2 } from '../../../common/utils/tax-calculator.js';
+import { round2, calculateItemTaxes, calculateInvoiceTotals } from '../../../common/utils/tax-calculator.js';
 import type { CreateInvoiceDto } from '../../invoices/dto/create-invoice.dto.js';
 import type { CreateCreditNoteDto } from '../../invoices/dto/create-credit-note.dto.js';
 import type { CreateDebitNoteDto } from '../../invoices/dto/create-debit-note.dto.js';
@@ -93,19 +94,23 @@ export class XmlValidatorService {
       }
 
       // Boletas > S/700 require client identification (SUNAT rule)
-      // Only apply IGV to gravado oneroso items ('10' or default);
-      // exonerado ('20'+), inafecto ('30'+), exportación ('40'), and
-      // gravado gratuito ('11'-'17') don't add to the buyer's total.
-      const estimatedTotal = round2(dto.items.reduce((sum, item) => {
-        const qty = item.cantidad ?? 0;
-        const unit = item.valorUnitario ?? 0;
-        const afectacion = item.tipoAfectacion ?? '10';
-        const isGravadoOneroso = afectacion === '10';
-        const igvMultiplier = isGravadoOneroso ? (1 + IGV_RATE) : 1;
-        // Gratuitas (11-17, 21, 31-36) don't contribute to buyer total
-        const isGratuita = ['11','12','13','14','15','16','17','21','31','32','33','34','35','36'].includes(afectacion);
-        return sum + (isGratuita ? 0 : qty * unit * igvMultiplier);
-      }, 0));
+      // Use proper tax calculation functions for accurate total estimation.
+      const itemResults = dto.items.map(item => calculateItemTaxes({
+        cantidad: item.cantidad ?? 0,
+        valorUnitario: item.valorUnitario ?? 0,
+        tipoAfectacion: item.tipoAfectacion ?? '10',
+        descuento: item.descuento,
+        isc: item.isc,
+        cantidadBolsasPlastico: item.cantidadBolsasPlastico,
+      }));
+      const tiposAfectacion = dto.items.map(i => i.tipoAfectacion ?? '10');
+      const totals = calculateInvoiceTotals({
+        items: itemResults,
+        tiposAfectacion,
+        descuentoGlobal: dto.descuentoGlobal,
+        otrosCargos: dto.otrosCargos,
+      });
+      const estimatedTotal = totals.totalVenta;
 
       if (estimatedTotal > 700) {
         const anonymousDocTypes = [TIPO_DOC_IDENTIDAD.OTROS, TIPO_DOC_IDENTIDAD.NO_DOMICILIADO];
@@ -136,6 +141,46 @@ export class XmlValidatorService {
         errors.push({
           field: 'cuotas',
           message: 'Credit payment requires at least one installment (cuota)',
+        });
+      }
+    }
+
+    // Validate detracción (SPOT)
+    const tipoOp = dto.tipoOperacion ?? '0101';
+    if (tipoOp === '1001') {
+      if (!dto.codigoDetraccion) {
+        errors.push({
+          field: 'codigoDetraccion',
+          message: 'Detracción code is required when tipoOperacion is 1001',
+        });
+      }
+      if (!dto.porcentajeDetraccion || dto.porcentajeDetraccion <= 0) {
+        errors.push({
+          field: 'porcentajeDetraccion',
+          message: 'Detracción percentage must be greater than zero',
+        });
+      }
+      if (!dto.montoDetraccion || dto.montoDetraccion <= 0) {
+        errors.push({
+          field: 'montoDetraccion',
+          message: 'Detracción amount must be greater than zero',
+        });
+      }
+      if (!dto.cuentaDetraccion || dto.cuentaDetraccion.trim() === '') {
+        errors.push({
+          field: 'cuentaDetraccion',
+          message: 'Banco de la Nación account is required for detracción',
+        });
+      }
+    }
+
+    // Validate detracción code against catalog 54
+    if (dto.codigoDetraccion) {
+      const validCodes = Object.values(CODIGO_DETRACCION);
+      if (!validCodes.includes(dto.codigoDetraccion as any)) {
+        errors.push({
+          field: 'codigoDetraccion',
+          message: `Invalid detracción code. Must be a valid SUNAT catalog 54 code`,
         });
       }
     }
@@ -193,6 +238,22 @@ export class XmlValidatorService {
         field: 'motivoDescripcion',
         message: 'Credit note reason description is required',
       });
+    }
+
+    // NC motivo 13 (corrección de monto): total cannot exceed original document total
+    if (dto.motivoNota === '13' && dto.montoOriginal !== undefined) {
+      const estimatedTotal = round2(dto.items.reduce((sum, item) => {
+        const qty = item.cantidad ?? 0;
+        const unit = item.valorUnitario ?? 0;
+        return sum + qty * unit;
+      }, 0));
+
+      if (estimatedTotal > dto.montoOriginal) {
+        errors.push({
+          field: 'items',
+          message: `Credit note amount (${estimatedTotal}) exceeds the original document amount (${dto.montoOriginal}) for motivo 13`,
+        });
+      }
     }
 
     this.throwIfErrors(errors);
@@ -451,14 +512,18 @@ export class XmlValidatorService {
       }
     }
 
-    // If private transport, conductor and vehiculo are required
+    // For any transport mode, at least one conductor is needed
+    const hasConductor = dto.conductor || (dto.conductores && dto.conductores.length > 0);
+    if (!hasConductor) {
+      errors.push({
+        field: 'conductor',
+        message: 'At least one conductor (driver) is required',
+      });
+    }
+
+    // For private transport, vehicle is required
     if (dto.modalidadTransporte === MODALIDAD_TRANSPORTE.TRANSPORTE_PRIVADO) {
-      if (!dto.conductor) {
-        errors.push({
-          field: 'conductor',
-          message: 'Driver (conductor) is required for private transport mode',
-        });
-      } else if (!dto.conductor.licencia) {
+      if (dto.conductor && !dto.conductor.licencia) {
         errors.push({
           field: 'conductor.licencia',
           message: 'Driver license (licencia) is required for private transport mode',
@@ -467,9 +532,17 @@ export class XmlValidatorService {
       if (!dto.vehiculo) {
         errors.push({
           field: 'vehiculo',
-          message: 'Vehicle (vehiculo) is required for private transport mode',
+          message: 'Vehicle (placa) is required for private transport (modalidad 02)',
         });
       }
+    }
+
+    // Validate vehicle plate format (Peru: ABC-123 or ABC-1234)
+    if (dto.vehiculo?.placa && !/^[A-Z0-9]{3}-[A-Z0-9]{3,4}$/i.test(dto.vehiculo.placa)) {
+      errors.push({
+        field: 'vehiculo.placa',
+        message: 'Invalid vehicle plate format (expected: ABC-123 or ABC-1234)',
+      });
     }
 
     // Validate emission date (GRE: 7-day window)

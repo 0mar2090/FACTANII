@@ -37,6 +37,9 @@ export class GuideBuilder extends BaseXmlBuilder {
     // 2. Version IDs
     this.addUblVersions(doc);
 
+    // 2b. Profile ID
+    doc.ele('cbc:ProfileID').txt('0101').up();
+
     // 3. Document ID
     const documentId = this.formatDocumentId(data.serie, data.correlativo);
     doc.ele('cbc:ID').txt(documentId).up();
@@ -216,11 +219,22 @@ export class GuideBuilder extends BaseXmlBuilder {
     despatchAddress.up();
     despatch.up();
 
+    // Special authorization (hazardous goods, etc.)
+    if (data.autorizacionEspecial) {
+      shipment
+        .ele('cac:SpecialInstructions')
+          .ele('cbc:ID').txt(data.autorizacionEspecial).up()
+        .up();
+    }
+
     // Transport handling unit (vehicle)
     if (data.vehiculo) {
       const thu = shipment.ele('cac:TransportHandlingUnit');
       const te = thu.ele('cac:TransportEquipment');
       te.ele('cbc:ID').txt(data.vehiculo.placa).up();
+      if (data.vehiculo.tipoEquipo) {
+        te.ele('cbc:TransportEquipmentTypeCode').txt(data.vehiculo.tipoEquipo).up();
+      }
       te.up();
 
       if (data.vehiculo.placaSecundaria) {
@@ -273,24 +287,42 @@ export class GuideBuilder extends BaseXmlBuilder {
       }
       carrierLegal.up();
 
+      // Subcontratación indicator
+      if (data.transportista.subcontratacion) {
+        carrier
+          .ele('cac:AgentParty')
+            .ele('cac:PartyIdentification')
+              .ele('cbc:ID')
+                .att('schemeID', 'SUBT')
+                .txt('true')
+              .up()
+            .up()
+          .up();
+      }
+
       carrier.up();
     }
 
-    // Driver person (if private transport)
-    if (data.conductor) {
+    // Driver persons — support multiple conductores
+    const conductores = data.conductores ?? (data.conductor ? [data.conductor] : []);
+    if (conductores.length === 0 && data.modalidadTransporte === '02') {
+      console.warn('[GuideBuilder] No conductores provided for DespatchAdvice with private transport (modalidad 02)');
+    }
+    for (let i = 0; i < conductores.length; i++) {
+      const cond = conductores[i]!;
       const driver = stage.ele('cac:DriverPerson');
       driver
         .ele('cbc:ID')
-          .att('schemeID', data.conductor.tipoDoc)
-          .txt(data.conductor.numDoc)
+          .att('schemeID', cond.tipoDoc)
+          .txt(cond.numDoc)
         .up();
-      driver.ele('cbc:FirstName').txt(data.conductor.nombres).up();
-      driver.ele('cbc:FamilyName').txt(data.conductor.apellidos).up();
-      driver.ele('cbc:JobTitle').txt('Principal').up();
+      driver.ele('cbc:FirstName').txt(cond.nombres).up();
+      driver.ele('cbc:FamilyName').txt(cond.apellidos).up();
+      driver.ele('cbc:JobTitle').txt(i === 0 ? 'Principal' : 'Secundario').up();
 
-      if (data.conductor.licencia) {
+      if (cond.licencia) {
         const identity = driver.ele('cac:IdentityDocumentReference');
-        identity.ele('cbc:ID').txt(data.conductor.licencia).up();
+        identity.ele('cbc:ID').txt(cond.licencia).up();
         identity.up();
       }
 

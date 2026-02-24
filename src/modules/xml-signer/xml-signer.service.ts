@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { SignedXml } from 'xml-crypto';
+import { XMLParser } from 'fast-xml-parser';
 import { readPfx } from './utils/pfx-reader.js';
 import type { GetKeyInfoContentArgs } from 'xml-crypto';
 
@@ -85,6 +86,11 @@ export class XmlSignerService {
 
     const signedXml = sig.getSignedXml();
 
+    // Verify the signature was embedded correctly
+    if (!signedXml.includes('<ds:SignatureValue>') || !signedXml.includes('<ds:DigestValue>')) {
+      throw new Error('XML signature validation failed: signature elements not found in signed XML');
+    }
+
     this.logger.log('XML document signed successfully with SHA-256');
 
     return signedXml;
@@ -101,6 +107,56 @@ export class XmlSignerService {
    */
   getXmlHash(signedXml: string): string {
     return createHash('sha256').update(signedXml, 'utf8').digest('hex');
+  }
+
+  /**
+   * Extract the DigestValue from the ds:Signature in a signed XML document.
+   *
+   * The DigestValue is the base64-encoded SHA-256 digest of the signed content,
+   * located at: ds:Signature/ds:SignedInfo/ds:Reference/ds:DigestValue.
+   *
+   * This value is used in the SUNAT QR code (not the full XML hash).
+   *
+   * @param signedXml - The signed XML string
+   * @returns The DigestValue as a base64 string, or empty string if not found
+   */
+  getDigestValue(signedXml: string): string {
+    try {
+      const parser = new XMLParser({
+        ignoreAttributes: false,
+        removeNSPrefix: true,
+      });
+      const parsed = parser.parse(signedXml);
+
+      // Navigate to Signature/SignedInfo/Reference/DigestValue
+      // The XML structure may be nested under the root document element
+      const root = parsed.Invoice ?? parsed.CreditNote ?? parsed.DebitNote ??
+                    parsed.DespatchAdvice ?? parsed.Retention ?? parsed.Perception ??
+                    parsed.SummaryDocuments ?? parsed.VoidedDocuments ?? parsed;
+
+      const extensions = root?.UBLExtensions?.UBLExtension;
+      const ext = Array.isArray(extensions) ? extensions[0] : extensions;
+      const signature = ext?.ExtensionContent?.Signature;
+
+      if (!signature) {
+        this.logger.warn('DigestValue: No Signature element found in XML');
+        return '';
+      }
+
+      const reference = signature.SignedInfo?.Reference;
+      const ref = Array.isArray(reference) ? reference[0] : reference;
+      const digestValue = ref?.DigestValue;
+
+      if (typeof digestValue === 'string') {
+        return digestValue;
+      }
+
+      this.logger.warn('DigestValue: DigestValue not found in Signature');
+      return '';
+    } catch (err) {
+      this.logger.warn(`DigestValue extraction failed: ${err instanceof Error ? err.message : err}`);
+      return '';
+    }
   }
 
   /**

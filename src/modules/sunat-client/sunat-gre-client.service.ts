@@ -76,20 +76,17 @@ export class SunatGreClientService {
       `sendGuide: file=${zipFileName}, ruc=${ruc}, env=${isBeta ? 'beta' : 'prod'}`,
     );
 
-    try {
-      // 1. Get OAuth2 token
-      const token = await this.getToken(
-        ruc, solUser, solPass, isBeta, clientId, clientSecret,
-      );
+    const cacheKey = `${ruc}:${solUser}`;
 
-      // 2. Compute SHA-256 hash of the ZIP
+    try {
+      // Compute SHA-256 hash of the ZIP
       const hashZip = createHash('sha256').update(zipBuffer).digest('hex');
 
-      // 3. Build document ID: {RUC}-09-{SERIE}-{CORRELATIVO 8 digits}
+      // Build document ID: {RUC}-09-{SERIE}-{CORRELATIVO 8 digits}
       const numero = String(correlativo).padStart(8, '0');
       const docId = `${ruc}-09-${serie}-${numero}`;
 
-      // 4. Send to SUNAT GRE REST API
+      // Send to SUNAT GRE REST API with automatic token retry on 401
       const url = `${endpoints.api}/comprobantes/${docId}`;
       const body = {
         archivo: {
@@ -99,14 +96,17 @@ export class SunatGreClientService {
         },
       };
 
-      const response = await axios.post(url, body, {
-        headers: {
-          'Authorization': `Bearer ${token.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30_000,
-        validateStatus: () => true, // handle all status codes
-      });
+      const response = await this.withTokenRetry(
+        async (accessToken) => axios.post(url, body, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30_000,
+          validateStatus: () => true, // handle all status codes
+        }),
+        cacheKey, ruc, solUser, solPass, isBeta, clientId, clientSecret,
+      );
 
       if (response.status >= 200 && response.status < 300) {
         const data = response.data;
@@ -171,20 +171,21 @@ export class SunatGreClientService {
       `getGuideStatus: ticket=${numTicket}, ruc=${ruc}, env=${isBeta ? 'beta' : 'prod'}`,
     );
 
-    try {
-      const token = await this.getToken(
-        ruc, solUser, solPass, isBeta, clientId, clientSecret,
-      );
+    const cacheKey = `${ruc}:${solUser}`;
 
+    try {
       const url = `${endpoints.api}/comprobantes/envios/${numTicket}`;
 
-      const response = await axios.get(url, {
-        headers: {
-          'Authorization': `Bearer ${token.access_token}`,
-        },
-        timeout: 30_000,
-        validateStatus: () => true,
-      });
+      const response = await this.withTokenRetry(
+        async (accessToken) => axios.get(url, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          },
+          timeout: 30_000,
+          validateStatus: () => true,
+        }),
+        cacheKey, ruc, solUser, solPass, isBeta, clientId, clientSecret,
+      );
 
       if (response.status >= 200 && response.status < 300) {
         const data = response.data;
@@ -233,6 +234,80 @@ export class SunatGreClientService {
     }
   }
 
+  /**
+   * Anular (void) a previously sent Guía de Remisión via REST API.
+   *
+   * REST endpoint: PUT /contribuyente/gem/comprobantes/{numRuc}-09-{serie}-{correlativo}
+   *
+   * @param ruc         - Company RUC
+   * @param serie       - Guide series (e.g., T001)
+   * @param correlativo - Guide number
+   * @param motivo      - Reason description for the annulment
+   * @param solUser     - SOL username
+   * @param solPass     - SOL password
+   * @param isBeta      - Environment flag
+   */
+  async anularGuia(
+    ruc: string,
+    serie: string,
+    correlativo: number,
+    motivo: string,
+    solUser: string,
+    solPass: string,
+    isBeta: boolean,
+  ): Promise<GreSendResult> {
+    const endpoints = this.resolveEndpoints(isBeta);
+
+    const numero = String(correlativo).padStart(8, '0');
+    const docId = `${ruc}-09-${serie}-${numero}`;
+
+    this.logger.log(
+      `anularGuia: docId=${docId}, env=${isBeta ? 'beta' : 'prod'}`,
+    );
+
+    try {
+      const token = await this.getToken(ruc, solUser, solPass, isBeta);
+
+      const url = `${endpoints.api}/comprobantes/${docId}`;
+      const body = {
+        codMotivo: '01',
+        desMensaje: motivo,
+      };
+
+      const response = await axios.put(url, body, {
+        headers: {
+          'Authorization': `Bearer ${token.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30_000,
+        validateStatus: () => true,
+      });
+
+      if (response.status >= 200 && response.status < 300) {
+        this.logger.log(`anularGuia: success for ${docId}`);
+        return {
+          success: true,
+          numTicket: response.data?.numTicket,
+        };
+      }
+
+      const errorMsg = response.data?.msg ?? response.data?.message ?? JSON.stringify(response.data);
+      this.logger.error(
+        `anularGuia: API error for ${docId} — HTTP ${response.status}: ${errorMsg}`,
+      );
+
+      return {
+        success: false,
+        message: `SUNAT GRE API error (HTTP ${response.status}): ${errorMsg}`,
+        httpStatus: response.status,
+      };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`anularGuia: unexpected error for ${docId} — ${errorMessage}`);
+      return { success: false, message: `GRE client error: ${errorMessage}` };
+    }
+  }
+
   // ───────────────────────────────────────────
   // OAuth2 Token Management
   // ───────────────────────────────────────────
@@ -256,6 +331,9 @@ export class SunatGreClientService {
     // Check cache — reuse token if still valid (with 60s margin)
     const cached = this.tokenCache.get(cacheKey);
     if (cached && this.isTokenValid(cached)) {
+      // Move to end of Map iteration order (LRU: least recently used eviction)
+      this.tokenCache.delete(cacheKey);
+      this.tokenCache.set(cacheKey, cached);
       return cached;
     }
 
@@ -338,6 +416,11 @@ export class SunatGreClientService {
         obtainedAt: Date.now(),
       };
 
+      // Validate token scope matches expected GRE API scope
+      if (response.data.scope && !response.data.scope.includes('https://api-cpe.sunat.gob.pe')) {
+        this.logger.warn(`GRE OAuth2 token received with unexpected scope: ${response.data.scope}`);
+      }
+
       // Evict oldest entries if cache exceeds size limit
       if (this.tokenCache.size >= SunatGreClientService.MAX_TOKEN_CACHE_SIZE) {
         const oldestKey = this.tokenCache.keys().next().value;
@@ -374,6 +457,35 @@ export class SunatGreClientService {
   // ───────────────────────────────────────────
   // Private helpers
   // ───────────────────────────────────────────
+
+  /**
+   * Execute an async function with automatic token retry on 401.
+   * If the first attempt fails with HTTP 401, the cached token is evicted
+   * and a fresh token is obtained for the retry.
+   */
+  private async withTokenRetry<T>(
+    fn: (token: string) => Promise<T>,
+    cacheKey: string,
+    ruc: string,
+    solUser: string,
+    solPass: string,
+    isBeta: boolean,
+    clientId?: string,
+    clientSecret?: string,
+  ): Promise<T> {
+    try {
+      const token = await this.getToken(ruc, solUser, solPass, isBeta, clientId, clientSecret);
+      return await fn(token.access_token);
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        this.logger.warn(`Token expired mid-operation for ${ruc}:${solUser}, refreshing...`);
+        this.tokenCache.delete(cacheKey);
+        const newToken = await this.getToken(ruc, solUser, solPass, isBeta, clientId, clientSecret);
+        return await fn(newToken.access_token);
+      }
+      throw error;
+    }
+  }
 
   private isTokenValid(token: GreOAuthToken): boolean {
     const elapsed = (Date.now() - token.obtainedAt) / 1000;

@@ -186,7 +186,12 @@ describe('validateGuide', () => {
         numDoc: '20300000003',
         nombre: 'TRANSPORTE SAC',
       },
-      conductor: undefined,
+      conductor: {
+        tipoDoc: '1',
+        numDoc: '12345678',
+        nombres: 'JUAN',
+        apellidos: 'PEREZ',
+      },
       vehiculo: undefined,
     }))).not.toThrow();
   });

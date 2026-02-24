@@ -10,6 +10,7 @@ import {
   Min,
   IsIn,
   IsNotEmpty,
+  IsEmail,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { InvoiceItemDto } from './invoice-item.dto.js';
@@ -71,7 +72,7 @@ export class CreateDebitNoteDto {
   @IsOptional()
   clienteDireccion?: string;
 
-  @IsString()
+  @IsEmail()
   @IsOptional()
   clienteEmail?: string;
 

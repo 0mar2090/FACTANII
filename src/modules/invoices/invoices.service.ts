@@ -147,7 +147,8 @@ export class InvoicesService {
       company,
     );
 
-    // 7. Build XML invoice items
+    // 7. Build XML, sign, send (wrapped to log correlativo gap on failure)
+    try {
     const xmlItems: XmlInvoiceItem[] = calculatedItems.map((item) => ({
       cantidad: item.dto.cantidad,
       unidadMedida: item.dto.unidadMedida ?? 'NIU',
@@ -172,11 +173,14 @@ export class InvoicesService {
       direccion: dto.clienteDireccion,
     };
 
+    // Determine effective tipoOperacion (detracción overrides to '1001')
+    const effectiveTipoOperacion = dto.codigoDetraccion ? '1001' : tipoOperacion;
+
     const invoiceData: XmlInvoiceData = {
       tipoDoc,
       serie,
       correlativo,
-      tipoOperacion,
+      tipoOperacion: effectiveTipoOperacion,
       fechaEmision: dto.fechaEmision,
       fechaVencimiento: dto.fechaVencimiento,
       moneda,
@@ -201,6 +205,25 @@ export class InvoicesService {
           fechaPago: c.fechaPago,
         })),
       },
+      detraccion: dto.codigoDetraccion ? {
+        codigo: dto.codigoDetraccion,
+        porcentaje: dto.porcentajeDetraccion ?? 0.12,
+        monto: dto.montoDetraccion ?? 0,
+        cuentaBN: dto.cuentaDetraccion ?? '',
+      } : undefined,
+      anticipos: dto.anticipos?.map((a) => ({
+        tipoDoc: a.tipoDoc,
+        serie: a.serie,
+        correlativo: a.correlativo,
+        moneda: a.moneda ?? moneda,
+        monto: a.monto,
+        fechaPago: a.fechaPago,
+      })),
+      documentosRelacionados: dto.documentosRelacionados?.map((d) => ({
+        tipoDoc: d.tipoDoc,
+        numero: d.numero,
+      })),
+      orderReferenceId: dto.orderReferenceId,
       montoEnLetras: amountToWords(totals.totalVenta, moneda),
     };
 
@@ -220,7 +243,7 @@ export class InvoicesService {
         tipoDoc,
         serie,
         correlativo,
-        tipoOperacion,
+        tipoOperacion: effectiveTipoOperacion,
         fechaEmision: new Date(dto.fechaEmision),
         fechaVencimiento: dto.fechaVencimiento
           ? new Date(dto.fechaVencimiento)
@@ -282,6 +305,10 @@ export class InvoicesService {
     void this.billing.incrementInvoiceCount(companyId);
 
     return this.toResponseDto(invoice);
+    } catch (error) {
+      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
+      throw error;
+    }
   }
 
   /**
@@ -293,6 +320,13 @@ export class InvoicesService {
   ): Promise<InvoiceResponseDto> {
     // 0. Pre-send validation
     this.xmlValidator.validateCreditNote(dto);
+
+    // Validate: NC referencing a Factura requires client with RUC
+    if (dto.docRefTipo === '01' && dto.clienteTipoDoc !== '6') {
+      throw new BadRequestException(
+        'Nota de Crédito que referencia una Factura requiere cliente con RUC (tipo documento 6)',
+      );
+    }
 
     const { company, cert, ruc, solUser, solPass, xmlCompany } =
       await this.prepareDocumentContext(companyId);
@@ -310,6 +344,8 @@ export class InvoicesService {
       serieName,
     );
 
+    // Build XML, sign, send (wrapped to log correlativo gap on failure)
+    try {
     const calculatedItems = dto.items.map((item) => {
       const tipoAfectacion = item.tipoAfectacion ?? '10';
       return {
@@ -447,6 +483,10 @@ export class InvoicesService {
     void this.billing.incrementInvoiceCount(companyId);
 
     return this.toResponseDto(invoice);
+    } catch (error) {
+      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
+      throw error;
+    }
   }
 
   /**
@@ -458,6 +498,13 @@ export class InvoicesService {
   ): Promise<InvoiceResponseDto> {
     // 0. Pre-send validation
     this.xmlValidator.validateDebitNote(dto);
+
+    // Validate: ND referencing a Factura requires client with RUC
+    if (dto.docRefTipo === '01' && dto.clienteTipoDoc !== '6') {
+      throw new BadRequestException(
+        'Nota de Débito que referencia una Factura requiere cliente con RUC (tipo documento 6)',
+      );
+    }
 
     const { company, cert, ruc, solUser, solPass, xmlCompany } =
       await this.prepareDocumentContext(companyId);
@@ -474,6 +521,8 @@ export class InvoicesService {
       serieName,
     );
 
+    // Build XML, sign, send (wrapped to log correlativo gap on failure)
+    try {
     const calculatedItems = dto.items.map((item) => {
       const tipoAfectacion = item.tipoAfectacion ?? '10';
       return {
@@ -611,6 +660,10 @@ export class InvoicesService {
     void this.billing.incrementInvoiceCount(companyId);
 
     return this.toResponseDto(invoice);
+    } catch (error) {
+      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
+      throw error;
+    }
   }
 
   /**
@@ -808,6 +861,9 @@ export class InvoicesService {
       totalVenta: Number(invoice.totalVenta),
       montoEnLetras: amountToWords(Number(invoice.totalVenta), invoice.moneda),
       xmlHash: invoice.xmlHash ?? undefined,
+      digestValue: invoice.xmlContent
+        ? this.xmlSigner.getDigestValue(invoice.xmlContent)
+        : undefined,
       sunatCode: invoice.sunatCode ?? undefined,
       sunatMessage: invoice.sunatMessage ?? undefined,
       formaPago: invoice.formaPago,
@@ -851,6 +907,8 @@ export class InvoicesService {
     const rcSerieKey = `RC-${dateStr}`;
     const correlativo = await this.atomicIncrementCorrelativo(companyId, rcSerieKey);
 
+    // Build XML, sign, send (wrapped to log correlativo gap on failure)
+    try {
     // Build summary lines
     const summaryLines: XmlSummaryLine[] = dto.items.map((item) => ({
       tipoDoc: item.tipoDoc,
@@ -967,6 +1025,10 @@ export class InvoicesService {
       ticket,
       sunatDocumentId: summaryId,
     };
+    } catch (error) {
+      this.logger.warn(`Correlativo gap: ${rcSerieKey}-${correlativo} was allocated but document creation failed`);
+      throw error;
+    }
   }
 
   /**
@@ -992,6 +1054,8 @@ export class InvoicesService {
     const raSerieKey = `RA-${dateStr}`;
     const correlativo = await this.atomicIncrementCorrelativo(companyId, raSerieKey);
 
+    // Build XML, sign, send (wrapped to log correlativo gap on failure)
+    try {
     // Build voided lines
     const voidedLines: XmlVoidedLine[] = dto.items.map((item) => ({
       tipoDoc: item.tipoDoc,
@@ -1093,6 +1157,10 @@ export class InvoicesService {
       ticket,
       sunatDocumentId: voidedId,
     };
+    } catch (error) {
+      this.logger.warn(`Correlativo gap: ${raSerieKey}-${correlativo} was allocated but document creation failed`);
+      throw error;
+    }
   }
 
   /**
@@ -1116,6 +1184,8 @@ export class InvoicesService {
       companyId, tipoDoc, company, serieRetencion,
     );
 
+    // Build XML, sign, send (wrapped to log correlativo gap on failure)
+    try {
     // Calculate retention amounts per item
     const retentionItems: XmlRetentionLine[] = dto.items.map((item) => {
       const importeRetenido = round2(item.importeTotal * tasaRetencion);
@@ -1194,6 +1264,10 @@ export class InvoicesService {
     this.logger.log(`Retention created: ${serie}-${correlativo} status=${status}`);
     void this.billing.incrementInvoiceCount(companyId);
     return this.toResponseDto(invoice);
+    } catch (error) {
+      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
+      throw error;
+    }
   }
 
   /**
@@ -1217,6 +1291,8 @@ export class InvoicesService {
       companyId, tipoDoc, company, seriePercepcion,
     );
 
+    // Build XML, sign, send (wrapped to log correlativo gap on failure)
+    try {
     // Calculate perception amounts per item
     const perceptionItems: XmlPerceptionLine[] = dto.items.map((item) => {
       const importePercibido = round2(item.importeTotal * tasaPercepcion);
@@ -1295,6 +1371,10 @@ export class InvoicesService {
     this.logger.log(`Perception created: ${serie}-${correlativo} status=${status}`);
     void this.billing.incrementInvoiceCount(companyId);
     return this.toResponseDto(invoice);
+    } catch (error) {
+      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
+      throw error;
+    }
   }
 
   /**
@@ -1320,6 +1400,8 @@ export class InvoicesService {
       companyId, tipoDoc, company, serieGuia,
     );
 
+    // Build XML, sign, send (wrapped to log correlativo gap on failure)
+    try {
     const xmlDestinatario: XmlClient = {
       tipoDocIdentidad: dto.destinatarioTipoDoc,
       numDocIdentidad: dto.destinatarioNumDoc,
@@ -1351,7 +1433,9 @@ export class InvoicesService {
       destinatario: xmlDestinatario,
       transportista: dto.transportista,
       conductor: dto.conductor,
+      conductores: dto.conductores,
       vehiculo: dto.vehiculo,
+      autorizacionEspecial: dto.autorizacionEspecial,
       items: guideItems,
     };
 
@@ -1381,22 +1465,30 @@ export class InvoicesService {
         ticket = sendResult.numTicket;
         this.logger.log(`GRE sent, ticket=${ticket}. Polling for CDR...`);
 
-        // Attempt to retrieve CDR immediately (SUNAT often processes quickly)
-        const statusResult = await this.sunatGreClient.getGuideStatus(
-          ticket, ruc, solUser, solPass, company.isBeta,
-        );
+        // Attempt to retrieve CDR immediately (best-effort, non-blocking)
+        try {
+          const statusResult = await this.sunatGreClient.getGuideStatus(
+            ticket, ruc, solUser, solPass, company.isBeta,
+          );
 
-        if (statusResult.success && statusResult.cdrZip) {
-          const cdr = this.cdrProcessor.processCdr(statusResult.cdrZip);
-          sunatCode = cdr.responseCode;
-          sunatMessage = cdr.description;
-          sunatNotes = cdr.notes;
-          cdrZip = statusResult.cdrZip;
-          status = cdr.isAccepted ? (cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED') : 'REJECTED';
-        } else {
-          // CDR not yet ready — queue for async polling
+          if (statusResult.success && statusResult.cdrZip) {
+            const cdr = this.cdrProcessor.processCdr(statusResult.cdrZip);
+            sunatCode = cdr.responseCode;
+            sunatMessage = cdr.description;
+            sunatNotes = cdr.notes;
+            cdrZip = statusResult.cdrZip;
+            status = cdr.isAccepted ? (cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED') : 'REJECTED';
+          } else {
+            // CDR not yet ready — queue for async polling
+            status = 'QUEUED';
+            sunatMessage = `Ticket: ${ticket}. CDR pending.`;
+          }
+        } catch (cdrError: unknown) {
+          // Immediate CDR fetch failed, fall through to ticket polling
+          const cdrMsg = cdrError instanceof Error ? cdrError.message : String(cdrError);
+          this.logger.debug(`Immediate GRE CDR fetch failed, queuing poll: ${cdrMsg}`);
           status = 'QUEUED';
-          sunatMessage = `Ticket: ${ticket}. CDR pending.`;
+          sunatMessage = `Ticket: ${ticket}. CDR pending (immediate fetch failed).`;
         }
       } else {
         status = 'REJECTED';
@@ -1453,6 +1545,10 @@ export class InvoicesService {
     this.logger.log(`Guide created: ${serie}-${correlativo} status=${status}`);
     void this.billing.incrementInvoiceCount(companyId);
     return this.toResponseDto(invoice);
+    } catch (error) {
+      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
+      throw error;
+    }
   }
 
   /**
@@ -1473,6 +1569,13 @@ export class InvoicesService {
 
     if (!invoice) {
       throw new NotFoundException('Invoice not found');
+    }
+
+    // Duplicate protection: prevent re-queuing if already in progress
+    if (invoice.status === 'QUEUED' || invoice.status === 'SENDING') {
+      throw new BadRequestException(
+        'El documento ya está en cola de envío. Espere a que se complete la operación.',
+      );
     }
 
     // RC/RA use sendSummary (async with ticket), GRE uses REST API.
@@ -1516,6 +1619,83 @@ export class InvoicesService {
     );
 
     return this.toResponseDto(updated);
+  }
+
+  /**
+   * Consult CDR from SUNAT for a previously sent document.
+   * Re-downloads the CDR or verifies the document status.
+   */
+  async consultCdr(companyId: string, invoiceId: string) {
+    const invoice = await this.prisma.client.invoice.findFirst({
+      where: { id: invoiceId, companyId },
+    });
+
+    if (!invoice) throw new NotFoundException('Invoice not found');
+
+    const { company, ruc, solUser, solPass } =
+      await this.prepareDocumentContext(companyId, true);
+
+    const result = await this.sunatClient.consultCdr(
+      ruc, invoice.tipoDoc, invoice.serie, invoice.correlativo,
+      solUser, solPass, company.isBeta,
+    );
+
+    // Update invoice if CDR was retrieved
+    if (result.success && result.cdrZip) {
+      const cdr = this.cdrProcessor.processCdr(result.cdrZip);
+      await this.prisma.client.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          sunatCode: cdr.responseCode,
+          sunatMessage: cdr.description,
+          sunatNotes: cdr.notes ?? undefined,
+          cdrZip: new Uint8Array(result.cdrZip),
+          status: cdr.isAccepted ? (cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED') : 'REJECTED',
+        },
+      });
+    }
+
+    return {
+      success: result.success,
+      code: result.code,
+      message: result.message,
+      hasCdr: !!result.cdrZip,
+    };
+  }
+
+  /**
+   * Annul a Guía de Remisión (09) via SUNAT GRE REST API.
+   */
+  async anularGuia(companyId: string, invoiceId: string, motivo: string) {
+    const invoice = await this.prisma.client.invoice.findFirst({
+      where: { id: invoiceId, companyId },
+    });
+
+    if (!invoice) throw new NotFoundException('Invoice not found');
+
+    if (invoice.tipoDoc !== TIPO_DOCUMENTO.GUIA_REMISION_REMITENTE) {
+      throw new BadRequestException('Only Guías de Remisión (09) can be annulled via this endpoint');
+    }
+
+    const { company, ruc, solUser, solPass } =
+      await this.prepareDocumentContext(companyId, true);
+
+    const result = await this.sunatGreClient.anularGuia(
+      ruc, invoice.serie, invoice.correlativo,
+      motivo, solUser, solPass, company.isBeta,
+    );
+
+    if (result.success) {
+      await this.prisma.client.invoice.update({
+        where: { id: invoiceId },
+        data: { status: 'REJECTED', sunatMessage: `Anulada: ${motivo}` },
+      });
+    }
+
+    return {
+      success: result.success,
+      message: result.message,
+    };
   }
 
   // ─── Private Helpers ────────────────────────────────────────────────
@@ -1578,7 +1758,15 @@ export class InvoicesService {
       throw new NotFoundException(`Company ${companyId} not found`);
     }
 
-    return result[0].next_correlativo[serieKey]!;
+    const correlativo = result[0].next_correlativo[serieKey]!;
+
+    if (correlativo > 99999999) {
+      throw new BadRequestException(
+        `Correlativo limit (99999999) exceeded for serie ${serieKey}. Contact support.`,
+      );
+    }
+
+    return correlativo;
   }
 
   /**
