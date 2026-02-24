@@ -429,22 +429,31 @@ export class BillingService {
       return { allowed: false, used: 0, max: 0 };
     }
 
-    // Check if period has expired and needs resetting
+    // Check if period has expired and needs resetting.
+    // Use optimistic locking (WHERE currentPeriodEnd matches) to prevent
+    // concurrent requests from both resetting the counter.
     const now = new Date();
     if (now > subscription.currentPeriodEnd) {
-      // Period expired — reset counter and advance period
       const newPeriodStart = new Date(subscription.currentPeriodEnd);
       const newPeriodEnd = new Date(newPeriodStart);
       newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 1);
 
-      await this.prisma.client.subscription.update({
-        where: { id: subscription.id },
+      const { count } = await this.prisma.client.subscription.updateMany({
+        where: {
+          id: subscription.id,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+        },
         data: {
           currentPeriodStart: newPeriodStart,
           currentPeriodEnd: newPeriodEnd,
           invoicesUsed: 0,
         },
       });
+
+      if (count === 0) {
+        // Another request already reset the period — re-read fresh state
+        return this.checkQuota(companyId);
+      }
 
       return {
         allowed: true,

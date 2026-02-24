@@ -182,32 +182,32 @@ export class SummaryBuilder extends BaseXmlBuilder {
 
     // IGV subtotal
     if (item.igv > 0 || item.opGravadas > 0) {
-      this.addSummaryTaxSubtotal(taxTotal, item.igv, item.moneda, CODIGO_TRIBUTO.IGV);
+      this.addSummaryTaxSubtotal(taxTotal, item.igv, item.opGravadas, item.moneda, CODIGO_TRIBUTO.IGV);
     }
 
     // ISC subtotal
     if (item.isc > 0) {
-      this.addSummaryTaxSubtotal(taxTotal, item.isc, item.moneda, CODIGO_TRIBUTO.ISC);
+      this.addSummaryTaxSubtotal(taxTotal, item.isc, item.opGravadas, item.moneda, CODIGO_TRIBUTO.ISC);
     }
 
     // ICBPER subtotal
     if (item.icbper > 0) {
-      this.addSummaryTaxSubtotal(taxTotal, item.icbper, item.moneda, CODIGO_TRIBUTO.ICBPER);
+      this.addSummaryTaxSubtotal(taxTotal, item.icbper, 0, item.moneda, CODIGO_TRIBUTO.ICBPER);
     }
 
     // Exonerado subtotal
     if (item.opExoneradas > 0) {
-      this.addSummaryTaxSubtotal(taxTotal, 0, item.moneda, CODIGO_TRIBUTO.EXONERADO);
+      this.addSummaryTaxSubtotal(taxTotal, 0, item.opExoneradas, item.moneda, CODIGO_TRIBUTO.EXONERADO);
     }
 
     // Inafecto subtotal
     if (item.opInafectas > 0) {
-      this.addSummaryTaxSubtotal(taxTotal, 0, item.moneda, CODIGO_TRIBUTO.INAFECTO);
+      this.addSummaryTaxSubtotal(taxTotal, 0, item.opInafectas, item.moneda, CODIGO_TRIBUTO.INAFECTO);
     }
 
     // Gratuito subtotal
     if (item.opGratuitas > 0) {
-      this.addSummaryTaxSubtotal(taxTotal, 0, item.moneda, CODIGO_TRIBUTO.GRATUITO);
+      this.addSummaryTaxSubtotal(taxTotal, 0, item.opGratuitas, item.moneda, CODIGO_TRIBUTO.GRATUITO);
     }
 
     taxTotal.up();
@@ -239,15 +239,22 @@ export class SummaryBuilder extends BaseXmlBuilder {
   }
 
   /**
-   * Add a simplified TaxSubtotal for summary documents.
+   * Add a TaxSubtotal for summary documents.
+   * SUNAT requires both TaxableAmount (base imponible) and TaxAmount.
    */
   private addSummaryTaxSubtotal(
     parent: XmlNode,
     taxAmount: number,
+    taxableAmount: number,
     moneda: string,
     tributo: { code: string; name: string; un: string },
   ): void {
     const subtotal = parent.ele('cac:TaxSubtotal');
+    subtotal
+      .ele('cbc:TaxableAmount')
+        .att('currencyID', moneda)
+        .txt(this.formatAmount(taxableAmount))
+      .up();
     subtotal
       .ele('cbc:TaxAmount')
         .att('currencyID', moneda)

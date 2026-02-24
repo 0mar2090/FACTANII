@@ -31,6 +31,8 @@ import {
   TIPO_DOCUMENTO,
   RETENCION_RATES,
   PERCEPCION_RATES,
+  TIPO_DOC_NOMBRES,
+  CURRENCY_SYMBOLS,
 } from '../../common/constants/index.js';
 import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL } from '../queues/queues.constants.js';
 import type {
@@ -768,22 +770,6 @@ export class InvoicesService {
 
     // Generate on-the-fly
     const company = invoice.company;
-    const TIPO_DOC_NOMBRES: Record<string, string> = {
-      '01': 'FACTURA ELECTRÓNICA',
-      '03': 'BOLETA DE VENTA ELECTRÓNICA',
-      '07': 'NOTA DE CRÉDITO ELECTRÓNICA',
-      '08': 'NOTA DE DÉBITO ELECTRÓNICA',
-      '09': 'GUÍA DE REMISIÓN ELECTRÓNICA',
-      '20': 'COMPROBANTE DE RETENCIÓN ELECTRÓNICA',
-      '40': 'COMPROBANTE DE PERCEPCIÓN ELECTRÓNICA',
-      'RC': 'RESUMEN DIARIO',
-      'RA': 'COMUNICACIÓN DE BAJA',
-    };
-    const CURRENCY_SYMBOLS: Record<string, string> = {
-      PEN: 'S/',
-      USD: 'US$',
-      EUR: '€',
-    };
 
     const pdfData: PdfInvoiceData = {
       companyRuc: company.ruc,

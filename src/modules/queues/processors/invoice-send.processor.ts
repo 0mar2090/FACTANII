@@ -211,11 +211,14 @@ export class InvoiceSendProcessor extends WorkerHost {
     } else {
       // SUNAT returned an error without CDR — may be retriable
       const errorMessage = result.rawFaultString ?? result.message ?? 'Unknown SUNAT error';
+      const maxAttempts = job.opts.attempts ?? 5;
+      const isLastAttempt = job.attemptsMade + 1 >= maxAttempts;
 
       await this.prisma.client.invoice.update({
         where: { id: invoiceId },
         data: {
-          status: 'REJECTED',
+          // Only set REJECTED on the final attempt; keep SENDING while retries remain
+          status: isLastAttempt ? 'REJECTED' : 'SENDING',
           sunatCode: result.rawFaultCode ?? result.code,
           sunatMessage: errorMessage,
           attempts: { increment: 1 },

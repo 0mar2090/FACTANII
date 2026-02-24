@@ -3,7 +3,8 @@
     "allow": [
       "Bash(cd /c/Users/FRANCIS/Downloads/FACTANII && npx tsc --noEmit 2>&1)",
       "Bash(cd /c/Users/FRANCIS/Downloads/FACTANII && pnpm test 2>&1)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(tail:*)"
     ]
   }
 }

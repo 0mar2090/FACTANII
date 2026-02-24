@@ -282,3 +282,23 @@ export const SUNAT_BETA_CREDENTIALS = {
   USER: 'MODDATOS',
   PASS: 'moddatos',
 } as const;
+
+/** Nombres de documento por código SUNAT (para PDFs y UI) */
+export const TIPO_DOC_NOMBRES: Record<string, string> = {
+  '01': 'FACTURA ELECTRÓNICA',
+  '03': 'BOLETA DE VENTA ELECTRÓNICA',
+  '07': 'NOTA DE CRÉDITO ELECTRÓNICA',
+  '08': 'NOTA DE DÉBITO ELECTRÓNICA',
+  '09': 'GUÍA DE REMISIÓN ELECTRÓNICA',
+  '20': 'COMPROBANTE DE RETENCIÓN ELECTRÓNICA',
+  '40': 'COMPROBANTE DE PERCEPCIÓN ELECTRÓNICA',
+  'RC': 'RESUMEN DIARIO',
+  'RA': 'COMUNICACIÓN DE BAJA',
+} as const;
+
+/** Símbolos de moneda (para PDFs y UI) */
+export const CURRENCY_SYMBOLS: Record<string, string> = {
+  PEN: 'S/',
+  USD: 'US$',
+  EUR: '€',
+} as const;
