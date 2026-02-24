@@ -80,6 +80,25 @@ export interface SummarySendJobData {
 }
 
 /**
+ * Job data for the `webhook-send` queue.
+ *
+ * The processor loads the webhook from DB, POSTs the payload to the
+ * registered URL, and signs the request body with HMAC-SHA256.
+ */
+export interface WebhookSendJobData {
+  /** Webhook record ID (cuid) */
+  webhookId: string;
+  /** Invoice record ID (cuid) */
+  invoiceId: string;
+  /** Company/tenant ID (cuid) */
+  companyId: string;
+  /** Webhook event type (e.g. 'invoice.accepted', 'invoice.rejected') */
+  event: string;
+  /** Payload to deliver to the webhook endpoint */
+  payload: Record<string, unknown>;
+}
+
+/**
  * Job data for the `ticket-poll` queue.
  *
  * The processor polls SUNAT until the async operation completes with a CDR.

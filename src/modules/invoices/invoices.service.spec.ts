@@ -226,6 +226,7 @@ function createMocks() {
     ticketPollQueue,
     pdfQueue: { add: vi.fn().mockResolvedValue({}) } as any,
     emailQueue: { add: vi.fn().mockResolvedValue({}) } as any,
+    webhookQueue: { add: vi.fn().mockResolvedValue({}) } as any,
   };
 }
 
@@ -246,6 +247,7 @@ function createService(mocks: ReturnType<typeof createMocks>) {
     mocks.ticketPollQueue as any,
     mocks.pdfQueue as any,
     mocks.emailQueue as any,
+    mocks.webhookQueue as any,
   );
 }
 

@@ -10,7 +10,7 @@ import { CertificatesModule } from '../certificates/certificates.module.js';
 import { CompaniesModule } from '../companies/companies.module.js';
 import { PdfGeneratorModule } from '../pdf-generator/pdf-generator.module.js';
 import { BillingModule } from '../billing/billing.module.js';
-import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL, QUEUE_PDF_GENERATE, QUEUE_EMAIL_SEND } from '../queues/queues.constants.js';
+import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL, QUEUE_PDF_GENERATE, QUEUE_EMAIL_SEND, QUEUE_WEBHOOK_SEND } from '../queues/queues.constants.js';
 
 @Module({
   imports: [
@@ -27,6 +27,7 @@ import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL, QUEUE_PDF_GENERATE, QUEUE_EMAIL_
       { name: QUEUE_TICKET_POLL },
       { name: QUEUE_PDF_GENERATE },
       { name: QUEUE_EMAIL_SEND },
+      { name: QUEUE_WEBHOOK_SEND },
     ),
   ],
   controllers: [InvoicesController],

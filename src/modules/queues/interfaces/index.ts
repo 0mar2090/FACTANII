@@ -4,5 +4,6 @@ export type {
   EmailSendJobData,
   EmailAttachment,
   SummarySendJobData,
+  WebhookSendJobData,
   TicketPollJobData,
 } from './queue-job-data.interfaces.js';

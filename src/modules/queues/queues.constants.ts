@@ -51,6 +51,15 @@ export const QUEUE_SUMMARY_SEND = 'summary-send' as const;
 export const QUEUE_TICKET_POLL = 'ticket-poll' as const;
 
 /**
+ * Queue name for delivering webhook notifications to registered endpoints.
+ *
+ * - POST to webhook URL with HMAC-SHA256 signature
+ * - 3 retry attempts with exponential backoff (5s base)
+ * - Concurrency: 3
+ */
+export const QUEUE_WEBHOOK_SEND = 'webhook-send' as const;
+
+/**
  * Queue name for permanently failed jobs (Dead Letter Queue).
  *
  * - Jobs are moved here after all retry attempts are exhausted
@@ -68,6 +77,7 @@ export const ALL_QUEUES = [
   QUEUE_EMAIL_SEND,
   QUEUE_SUMMARY_SEND,
   QUEUE_TICKET_POLL,
+  QUEUE_WEBHOOK_SEND,
   QUEUE_DLQ,
 ] as const;
 

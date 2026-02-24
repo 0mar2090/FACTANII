@@ -37,7 +37,7 @@ import {
   TIPO_DOC_NOMBRES,
   CURRENCY_SYMBOLS,
 } from '../../common/constants/index.js';
-import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL, QUEUE_PDF_GENERATE, QUEUE_EMAIL_SEND } from '../queues/queues.constants.js';
+import { QUEUE_INVOICE_SEND, QUEUE_TICKET_POLL, QUEUE_PDF_GENERATE, QUEUE_EMAIL_SEND, QUEUE_WEBHOOK_SEND } from '../queues/queues.constants.js';
 import type {
   XmlInvoiceData,
   XmlCreditNoteData,
@@ -91,6 +91,7 @@ export class InvoicesService {
     @InjectQueue(QUEUE_TICKET_POLL) private readonly ticketPollQueue: Queue,
     @InjectQueue(QUEUE_PDF_GENERATE) private readonly pdfQueue: Queue,
     @InjectQueue(QUEUE_EMAIL_SEND) private readonly emailQueue: Queue,
+    @InjectQueue(QUEUE_WEBHOOK_SEND) private readonly webhookQueue: Queue,
   ) {}
 
   /**
@@ -1944,16 +1945,76 @@ export class InvoicesService {
    * in InvoiceSendProcessor.triggerPostSendPipeline for the async BullMQ path.
    */
   private async queuePostSendJobs(
-    invoice: { id: string; tipoDoc: string; serie: string; correlativo: number; clienteEmail: string | null; xmlContent: string | null },
+    invoice: { id: string; tipoDoc: string; serie: string; correlativo: number; clienteEmail: string | null; xmlContent: string | null; sunatCode?: string | null; sunatMessage?: string | null },
     companyId: string,
     status: string,
   ): Promise<void> {
-    // Only proceed for accepted/observed invoices
+    // Map SUNAT status to webhook event
+    const webhookEventMap: Record<string, string> = {
+      ACCEPTED: 'invoice.accepted',
+      OBSERVED: 'invoice.observed',
+      REJECTED: 'invoice.rejected',
+    };
+
+    // 1. Queue webhook notifications (for ACCEPTED, OBSERVED, and REJECTED)
+    const webhookEvent = webhookEventMap[status];
+    if (webhookEvent) {
+      try {
+        const webhooks = await this.prisma.client.webhook.findMany({
+          where: { companyId, isActive: true, events: { has: webhookEvent } },
+          select: { id: true },
+        });
+
+        if (webhooks.length > 0) {
+          const correlativoPadded = String(invoice.correlativo).padStart(8, '0');
+          const payload: Record<string, unknown> = {
+            event: webhookEvent,
+            timestamp: new Date().toISOString(),
+            data: {
+              id: invoice.id,
+              tipoDoc: invoice.tipoDoc,
+              serie: invoice.serie,
+              correlativo: invoice.correlativo,
+              documentNumber: `${invoice.serie}-${correlativoPadded}`,
+              status,
+              sunatCode: invoice.sunatCode ?? undefined,
+              sunatMessage: invoice.sunatMessage ?? undefined,
+            },
+          };
+
+          const now = Date.now();
+          await Promise.allSettled(
+            webhooks.map((wh) =>
+              this.webhookQueue.add(
+                'webhook-delivery',
+                {
+                  webhookId: wh.id,
+                  invoiceId: invoice.id,
+                  companyId,
+                  event: webhookEvent,
+                  payload,
+                },
+                { jobId: `wh-${wh.id}-${invoice.id}-${now}` },
+              ),
+            ),
+          );
+
+          this.logger.log(
+            `Queued ${webhooks.length} webhook(s) for event=${webhookEvent} invoice=${invoice.id}`,
+          );
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Failed to queue webhook notifications for ${invoice.id}: ${msg}`);
+      }
+    }
+
+    // Only proceed with PDF/email for accepted/observed invoices
     if (status !== 'ACCEPTED' && status !== 'OBSERVED') {
       return;
     }
 
-    // 1. Queue PDF generation
+    // 2. Queue PDF generation
     try {
       await this.pdfQueue.add(
         'post-send-pdf',
@@ -1965,7 +2026,7 @@ export class InvoicesService {
       this.logger.warn(`Failed to queue PDF generation for ${invoice.id}: ${msg}`);
     }
 
-    // 2. Queue email if client has an email address
+    // 3. Queue email if client has an email address
     if (invoice.clienteEmail) {
       try {
         const correlativoPadded = String(invoice.correlativo).padStart(8, '0');
