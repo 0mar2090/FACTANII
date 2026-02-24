@@ -118,9 +118,16 @@ export const TIPO_OPERACION = {
   VENTA_INTERNA_ANTICIPOS: '0100',
   VENTA_INTERNA_ITINERANTE: '0104',
   VENTA_INTERNA_GRM: '0112',
+  // Exportación (0200-0208)
   EXPORTACION: '0200',
-  EXPORTACION_SERVICIOS: '0201',
-  EXPORTACION_SERVICIOS_HOSPEDAJE: '0208',
+  EXPORTACION_SERVICIOS_PAIS: '0201',
+  EXPORTACION_SERVICIOS_HOSPEDAJE: '0202',
+  EXPORTACION_SERVICIOS_TRANSPORTE: '0203',
+  EXPORTACION_SERVICIOS_TURISTICO: '0204',
+  EXPORTACION_SERVICIOS_ENERGIA: '0205',
+  EXPORTACION_SERVICIOS_LEY29646: '0206',
+  EXPORTACION_SERVICIOS_REPARACION: '0207',
+  EXPORTACION_SERVICIOS_OTROS: '0208',
   DETRACCION: '1001',
   PERCEPCION: '2001',
   GRATUITA: '0101', // mismo code, se diferencia por tipoAfectacion
@@ -169,6 +176,96 @@ export const CODIGO_DETRACCION = {
 
 /** Tasa de detracción general para servicios (12%) */
 export const DETRACCION_DEFAULT_RATE = 0.12;
+
+/** Catálogo 12 — Documentos relacionados tributarios */
+export const TIPO_DOCUMENTO_RELACIONADO = {
+  FACTURA_CORRECCION_RUC: '01',
+  FACTURA_ANTICIPOS: '02',
+  BOLETA_ANTICIPOS: '03',
+  TICKET_ENAPU: '04',
+  CODIGO_SCOP: '05',
+  FACTURA_ELECTRONICA_REMITENTE: '06',
+  GUIA_REMISION_REMITENTE: '07',
+  DECLARACION_DEPOSITO_FRANCO: '08',
+  DECLARACION_SIMPLIFICADA_IMPORTACION: '09',
+  LIQUIDACION_COMPRA_ANTICIPOS: '10',
+  OTROS: '99',
+} as const;
+
+/** Catálogo 59 — Medios de pago */
+export const MEDIO_PAGO = {
+  DEPOSITO_EN_CUENTA: '001',
+  GIRO: '002',
+  TRANSFERENCIA_FONDOS: '003',
+  ORDEN_PAGO: '004',
+  TARJETA_DEBITO: '005',
+  TARJETA_CREDITO_NACIONAL: '006',
+  CHEQUE_NO_NEGOCIABLE: '007',
+  EFECTIVO_SIN_OBLIGACION: '008',
+  EFECTIVO_OTROS: '009',
+  MEDIOS_COMERCIO_EXTERIOR: '010',
+  DOCUMENTOS_EDPYME_COOPERATIVAS: '011',
+  TARJETA_CREDITO_NO_FINANCIERA: '012',
+  TARJETA_CREDITO_EXTERIOR: '013',
+  TRANSFERENCIA_COMERCIO_EXTERIOR: '101',
+  CHEQUE_BANCARIO_COMERCIO_EXTERIOR: '102',
+  ORDEN_PAGO_SIMPLE_EXTERIOR: '103',
+  ORDEN_PAGO_DOCUMENTARIO_EXTERIOR: '104',
+  REMESA_SIMPLE_EXTERIOR: '105',
+  REMESA_DOCUMENTARIA_EXTERIOR: '106',
+  CARTA_CREDITO_SIMPLE_EXTERIOR: '107',
+  CARTA_CREDITO_DOCUMENTARIO_EXTERIOR: '108',
+  OTROS: '999',
+} as const;
+
+/** Tasas oficiales de detracción SUNAT por código (Cat 54) — vigentes 2025-2026 */
+export const DETRACCION_RATES: Record<string, number> = {
+  // Anexo I — Bienes (venta gravada con IGV)
+  '001': 0.10,  // Azúcar y melaza de caña
+  '003': 0.10,  // Alcohol etílico
+  // Anexo II — Bienes sujetos al SPOT
+  '004': 0.04,  // Recursos hidrobiológicos
+  '005': 0.04,  // Maíz amarillo duro
+  '008': 0.04,  // Madera
+  '009': 0.10,  // Arena y piedra
+  '010': 0.15,  // Residuos, subproductos, desechos, recortes
+  '013': 0.10,  // Caña de azúcar
+  '014': 0.04,  // Carne y despojos comestibles
+  '016': 0.10,  // Aceite de pescado
+  '017': 0.04,  // Harina, polvo y pellets de pescado
+  '023': 0.04,  // Leche
+  '031': 0.10,  // Oro gravado con IGV
+  '032': 0.10,  // Páprika y capsicum
+  '034': 0.10,  // Minerales metálicos no auríferos
+  '035': 0.015, // Bienes exonerados del IGV
+  '036': 0.015, // Oro y demás minerales metalicos exonerados del IGV
+  '039': 0.10,  // Minerales no metálicos
+  '041': 0.15,  // Plomo
+  // Anexo III — Servicios
+  '012': 0.12,  // Intermediación laboral y tercerización
+  '019': 0.10,  // Arrendamiento de bienes
+  '020': 0.12,  // Mantenimiento y reparación de bienes muebles
+  '021': 0.10,  // Movimiento de carga
+  '022': 0.12,  // Otros servicios empresariales
+  '024': 0.10,  // Comisión mercantil
+  '025': 0.10,  // Fabricación de bienes por encargo
+  '026': 0.10,  // Servicio de transporte de personas
+  '027': 0.04,  // Servicio de transporte de carga
+  '030': 0.04,  // Contratos de construcción
+  '037': 0.12,  // Demás servicios gravados con el IGV
+};
+
+/** Umbral mínimo para detracción — Anexo 2 y 3 (S/) */
+export const DETRACCION_THRESHOLD = 700;
+
+/** Umbral mínimo para detracción — transporte terrestre de bienes (S/) */
+export const DETRACCION_THRESHOLD_TRANSPORT = 400;
+
+/** Fracción UIT para umbral Anexo 1 (½ UIT) */
+export const DETRACCION_THRESHOLD_ANNEX1_UIT_FRACTION = 0.5;
+
+/** Tasa IGV reducida para MYPE restaurantes y hoteles (Ley 32357, desde 01/01/2026) */
+export const IGV_RESTAURANT_RATE = 0.105;
 
 // ═══════════════════════════════════════
 // Constantes de negocio SUNAT
