@@ -122,6 +122,11 @@ export class CreateInvoiceDto {
   @IsOptional()
   cuentaDetraccion?: string;
 
+  /** Medio de pago para detracción — Catálogo 59 (default: '001' depósito en cuenta) */
+  @IsString()
+  @IsOptional()
+  medioPagoDetraccion?: string;
+
   // --- Anticipos ---
 
   @IsArray()
@@ -159,7 +164,8 @@ export class CreateInvoiceDto {
 
 export class AnticipoItemDto {
   @IsString()
-  tipoDoc: string;
+  @IsIn(['02', '03'])
+  tipoDoc!: string;
 
   @IsString()
   serie: string;

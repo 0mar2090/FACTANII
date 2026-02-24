@@ -25,6 +25,8 @@ import {
   calculateItemTaxes,
   calculateInvoiceTotals,
   round2,
+  getDetraccionRate,
+  calculateDetraccionAmount,
 } from '../../common/utils/tax-calculator.js';
 import { amountToWords } from '../../common/utils/amount-to-words.js';
 import {
@@ -52,6 +54,7 @@ import type {
   XmlPerceptionLine,
   XmlGuideData,
   XmlGuideItem,
+  XmlDetraccion,
 } from '../xml-builder/interfaces/xml-builder.interfaces.js';
 import type { CreateInvoiceDto } from './dto/create-invoice.dto.js';
 import type { CreateCreditNoteDto } from './dto/create-credit-note.dto.js';
@@ -133,6 +136,37 @@ export class InvoicesService {
       dto.items, dto.descuentoGlobal, dto.otrosCargos,
     );
 
+    // Detracción auto-calculation and rate enforcement
+    let detraccion: XmlDetraccion | undefined;
+    if (dto.codigoDetraccion) {
+      const officialRate = getDetraccionRate(dto.codigoDetraccion);
+      if (!officialRate) {
+        throw new BadRequestException(
+          `Código de detracción '${dto.codigoDetraccion}' no reconocido en Catálogo 54`,
+        );
+      }
+
+      if (dto.porcentajeDetraccion != null && Math.abs(dto.porcentajeDetraccion - officialRate) > 0.001) {
+        throw new BadRequestException(
+          `Tasa de detracción para código '${dto.codigoDetraccion}' debe ser ${(officialRate * 100).toFixed(1)}%, recibido: ${(dto.porcentajeDetraccion * 100).toFixed(1)}%`,
+        );
+      }
+
+      const montoDetraccion = dto.montoDetraccion ?? calculateDetraccionAmount(dto.codigoDetraccion, totals.totalVenta);
+
+      if (!dto.cuentaDetraccion) {
+        throw new BadRequestException('Cuenta del Banco de la Nación es obligatoria para detracciones');
+      }
+
+      detraccion = {
+        codigo: dto.codigoDetraccion,
+        porcentaje: officialRate,
+        monto: montoDetraccion,
+        cuentaBN: dto.cuentaDetraccion,
+        medioPago: dto.medioPagoDetraccion,
+      };
+    }
+
     // 6. Get next correlativo (atomic)
     const { serie, correlativo } = await this.getNextCorrelativo(
       companyId,
@@ -175,6 +209,10 @@ export class InvoicesService {
         totalVenta: totals.totalVenta,
         formaPago,
         cuotas: dto.cuotas?.map((c) => ({ monto: c.monto, moneda: c.moneda, fechaPago: c.fechaPago })) ?? undefined,
+        codigoDetraccion: dto.codigoDetraccion ?? null,
+        porcentajeDetraccion: detraccion?.porcentaje ?? null,
+        montoDetraccion: detraccion?.monto ?? null,
+        cuentaDetraccion: detraccion?.cuentaBN ?? null,
         status: 'DRAFT',
         items: {
           create: calculatedItems.map((item) => ({
@@ -234,12 +272,7 @@ export class InvoicesService {
           fechaPago: c.fechaPago,
         })),
       },
-      detraccion: dto.codigoDetraccion ? {
-        codigo: dto.codigoDetraccion,
-        porcentaje: dto.porcentajeDetraccion ?? 0.12,
-        monto: dto.montoDetraccion ?? 0,
-        cuentaBN: dto.cuentaDetraccion ?? '',
-      } : undefined,
+      detraccion,
       anticipos: dto.anticipos?.map((a) => ({
         tipoDoc: a.tipoDoc,
         serie: a.serie,

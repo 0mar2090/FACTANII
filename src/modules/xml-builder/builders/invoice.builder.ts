@@ -236,11 +236,12 @@ export class InvoiceBuilder extends BaseXmlBuilder {
     const det = data.detraccion!;
 
     const paymentMeans = doc.ele('cac:PaymentMeans');
+    const medioPagoCode = det.medioPago ?? '001';
     paymentMeans.ele('cbc:PaymentMeansCode')
       .att('listAgencyName', 'PE:SUNAT')
       .att('listName', 'Medio de pago')
       .att('listURI', 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo59')
-      .txt('001')
+      .txt(medioPagoCode)
     .up();
 
     const payeeAccount = paymentMeans.ele('cac:PayeeFinancialAccount');

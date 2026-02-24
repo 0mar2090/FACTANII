@@ -69,6 +69,7 @@ export interface XmlDetraccion {
   porcentaje: number;   // e.g. 0.12 for 12%
   monto: number;        // Monto de la detracción
   cuentaBN: string;     // Cuenta del Banco de la Nación
+  medioPago?: string;   // Catálogo 59, default '001'
 }
 
 /**
