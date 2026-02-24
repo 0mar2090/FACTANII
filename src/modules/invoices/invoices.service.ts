@@ -64,6 +64,7 @@ import type { CreateVoidedDto } from './dto/create-voided.dto.js';
 import type { CreateRetentionDto } from './dto/create-retention.dto.js';
 import type { CreatePerceptionDto } from './dto/create-perception.dto.js';
 import type { CreateGuideDto } from './dto/create-guide.dto.js';
+import type { BatchInvoiceDto, BatchInvoiceResult } from './dto/batch-invoice.dto.js';
 import type { InvoiceItemDto } from './dto/invoice-item.dto.js';
 import type { InvoiceResponseDto, SummaryResponseDto } from './dto/invoice-response.dto.js';
 import type { CompanyModel } from '../../generated/prisma/models/Company.js';
@@ -1990,5 +1991,42 @@ export class InvoicesService {
       docsRelacionadosData: invoice.docsRelacionadosData ?? undefined,
       opExportacion: Number(invoice.opExportacion),
     };
+  }
+
+  /**
+   * Process a batch of invoices (Facturas/Boletas) sequentially.
+   * Each invoice is processed independently — failures do not affect other items.
+   * Maximum 50 invoices per batch.
+   */
+  async createBatch(
+    companyId: string,
+    dto: BatchInvoiceDto,
+  ): Promise<BatchInvoiceResult[]> {
+    const results: BatchInvoiceResult[] = [];
+
+    for (const [index, invoiceDto] of dto.invoices.entries()) {
+      try {
+        const tipoDoc = invoiceDto.tipoDoc ?? '01';
+        const response = await this.createInvoice(companyId, { ...invoiceDto, tipoDoc });
+
+        results.push({
+          index,
+          success: true,
+          invoiceId: response.id,
+          serie: response.serie,
+          correlativo: response.correlativo,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error desconocido';
+        this.logger.warn(`Batch item ${index} failed: ${message}`);
+        results.push({
+          index,
+          success: false,
+          error: message,
+        });
+      }
+    }
+
+    return results;
   }
 }

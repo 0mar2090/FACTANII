@@ -19,6 +19,7 @@ import { CreateVoidedDto } from './dto/create-voided.dto.js';
 import { CreateRetentionDto } from './dto/create-retention.dto.js';
 import { CreatePerceptionDto } from './dto/create-perception.dto.js';
 import { CreateGuideDto } from './dto/create-guide.dto.js';
+import { BatchInvoiceDto } from './dto/batch-invoice.dto.js';
 import { Tenant } from '../../common/decorators/tenant.decorator.js';
 
 @ApiTags('Invoices')
@@ -135,6 +136,27 @@ export class InvoicesController {
   ) {
     const result = await this.invoicesService.createGuide(companyId, dto);
     return { success: true, data: result };
+  }
+
+  @Post('batch')
+  @ApiOperation({ summary: 'Envío masivo de facturas/boletas (máx 50)' })
+  @ApiResponse({ status: 201, description: 'Batch processing results' })
+  @ApiResponse({ status: 400, description: 'Validation error in batch data' })
+  async createBatch(
+    @Tenant() companyId: string,
+    @Body() dto: BatchInvoiceDto,
+  ) {
+    const results = await this.invoicesService.createBatch(companyId, dto);
+    const allSuccess = results.every(r => r.success);
+    return {
+      success: allSuccess,
+      data: results,
+      summary: {
+        total: results.length,
+        successful: results.filter(r => r.success).length,
+        failed: results.filter(r => !r.success).length,
+      },
+    };
   }
 
   @Get()
