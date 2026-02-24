@@ -11,6 +11,8 @@ export interface InvoiceResponseDto {
   status: string;
   sunatCode?: string;
   sunatMessage?: string;
+  /** SUNAT observation notes from CDR (e.g., warnings about non-critical issues) */
+  sunatNotes?: string[];
   xmlHash?: string;
   createdAt: string;
 }

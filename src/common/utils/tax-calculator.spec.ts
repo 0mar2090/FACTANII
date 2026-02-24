@@ -19,6 +19,26 @@ describe('round2', () => {
     expect(round2(100.999)).toBe(101.0);
     expect(round2(0)).toBe(0);
   });
+
+  it('handles classic floating-point edge cases correctly (banker rounding traps)', () => {
+    // These are the exact values that fail with naive toFixed() or EPSILON tricks
+    expect(round2(1.255)).toBe(1.26);  // (1.255).toFixed(2) = "1.25" WRONG
+    expect(round2(2.675)).toBe(2.68);  // (2.675).toFixed(2) = "2.67" WRONG
+    expect(round2(35.855)).toBe(35.86); // (35.855).toFixed(2) = "35.85" WRONG
+  });
+
+  it('handles negative values (Math.round rounds toward +∞ at midpoint)', () => {
+    expect(round2(-1.005)).toBe(-1);
+    // Math.round(-267.5) = -267, so -2.675 rounds to -2.67 (toward +∞)
+    // This is correct IEEE behavior; SUNAT never uses negative amounts (NC uses positive values)
+    expect(round2(-2.675)).toBe(-2.67);
+  });
+
+  it('handles non-finite values', () => {
+    expect(round2(NaN)).toBe(0);
+    expect(round2(Infinity)).toBe(0);
+    expect(round2(-Infinity)).toBe(0);
+  });
 });
 
 describe('round4', () => {
@@ -26,6 +46,12 @@ describe('round4', () => {
     expect(round4(1.00005)).toBe(1.0001);
     expect(round4(1.00004)).toBe(1.0);
     expect(round4(10.12345)).toBe(10.1235);
+  });
+
+  it('handles SUNAT precision for valorUnitario', () => {
+    // valorUnitario con IGV: 84.7457627118644 → round4 = 84.7458
+    expect(round4(84.74576)).toBe(84.7458);
+    expect(round4(0.00005)).toBe(0.0001);
   });
 });
 
@@ -227,7 +253,7 @@ describe('calculateInvoiceTotals', () => {
     expect(totals.totalVenta).toBe(198);
   });
 
-  it('applies descuento global with IGV recalculation on net base', () => {
+  it('applies descuento global WITHOUT recalculating IGV (SUNAT rule: doc IGV = sum of line IGVs)', () => {
     const items = [
       calculateItemTaxes({ cantidad: 1, valorUnitario: 100, tipoAfectacion: '10' }),
     ];
@@ -238,13 +264,13 @@ describe('calculateInvoiceTotals', () => {
       descuentoGlobal: 10,
     });
 
-    // opGravadas after discount: 100 - 10 = 90
-    // IGV recalculated: 90 * 0.18 = 16.2
-    // totalVenta = 90 + 16.2 - 10 = 96.2
+    // opGravadas stays at line sum: 100 (NOT reduced by discount)
+    // IGV stays as sum of line IGVs: 18 (NOT recalculated)
+    // totalVenta = 100 + 18 - 10 = 108
     expect(totals.descuentoGlobal).toBe(10);
-    expect(totals.opGravadas).toBe(90);
-    expect(totals.igv).toBe(16.2);
-    expect(totals.totalVenta).toBe(96.2);
+    expect(totals.opGravadas).toBe(100);
+    expect(totals.igv).toBe(18);
+    expect(totals.totalVenta).toBe(108);
   });
 
   it('applies otros cargos', () => {
@@ -284,7 +310,7 @@ describe('calculateInvoiceTotals', () => {
     expect(totals.totalVenta).toBe(118);
   });
 
-  it('IVAP item (tipo 17) is NOT gratuita — contributes to opGravadas and totalVenta', () => {
+  it('IVAP item (tipo 17) tracked separately from regular gravado', () => {
     const items = [
       calculateItemTaxes({ cantidad: 1, valorUnitario: 100, tipoAfectacion: '17' }), // IVAP
     ];
@@ -294,9 +320,12 @@ describe('calculateInvoiceTotals', () => {
       tiposAfectacion: ['17'],
     });
 
-    expect(totals.opGravadas).toBe(100);
+    // IVAP tracked in opIvap/igvIvap, NOT in opGravadas/igv
+    expect(totals.opGravadas).toBe(0);
+    expect(totals.opIvap).toBe(100);
+    expect(totals.igv).toBe(0);
+    expect(totals.igvIvap).toBe(4); // 100 * 0.04 IVAP rate
     expect(totals.opGratuitas).toBe(0);
-    expect(totals.igv).toBe(4); // 100 * 0.04 IVAP rate
     expect(totals.igvGratuitas).toBe(0);
     // totalVenta = 100 + 4 = 104
     expect(totals.totalVenta).toBe(104);

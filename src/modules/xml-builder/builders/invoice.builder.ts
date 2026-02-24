@@ -189,6 +189,8 @@ export class InvoiceBuilder extends BaseXmlBuilder {
       data.opInafectas,
       data.opGratuitas,
       data.moneda,
+      data.opIvap ?? 0,
+      data.igvIvap ?? 0,
     );
 
     // 15. Legal monetary totals
@@ -204,9 +206,13 @@ export class InvoiceBuilder extends BaseXmlBuilder {
       data.otrosCargos,
       data.totalVenta,
       data.moneda,
+      data.opIvap ?? 0,
     );
 
-    // 16. Invoice lines
+    // 16. Line count
+    doc.ele('cbc:LineCountNumeric').txt(data.items.length.toString()).up();
+
+    // 17. Invoice lines
     for (let i = 0; i < data.items.length; i++) {
       this.addDocumentLine(
         doc,

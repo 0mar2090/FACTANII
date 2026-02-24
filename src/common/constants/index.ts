@@ -142,30 +142,29 @@ export const LEYENDA = {
 
 /** Catálogo 54: Códigos de bienes y servicios sujetos a detracción (SPOT) */
 export const CODIGO_DETRACCION = {
+  // Bienes sujetos a detracción (Anexo 1, 2, 3)
   AZUCAR: '001',
   ARROZ_PILADO: '008',
   MADERA: '009',
   ARENA_PIEDRA: '010',
   RESIDUOS_SUBPRODUCTOS: '011',
   BIENES_GRAVADOS_IGV: '012',
-  INTERMEDIACION_LABORAL: '014',
   ACEITE_PESCADO: '015',
   HARINA_POLVO_PESCADO: '016',
   ANIMALES_VIVOS: '018',
   ABONOS: '019',
+  ARRENDAMIENTO_BIENES_MUEBLES: '020',
   ALGODON: '021',
   CANA_AZUCAR: '022',
   MINERALES_METALICOS: '023',
   ORO_DEMAS_MINERALES: '024',
   MINERALES_NO_METALICOS: '025',
   BIEN_EXONERADO_IGV: '031',
-  SERVICIOS_INTERMEDIACION: '019',
-  ARRENDAMIENTO_BIENES: '020',
-  MANTENIMIENTO_REPARACION: '021',
-  MOVIMIENTO_CARGA: '022',
+  ORO_GRAVADO_IGV: '039',
+  // Servicios sujetos a detracción (Anexo 3)
+  INTERMEDIACION_LABORAL: '014',
   OTROS_SERVICIOS_EMPRESARIALES: '037',
   FABRICACION_ENCARGO: '040',
-  ORO: '039',
 } as const;
 
 /** Tasa de detracción general para servicios (12%) */

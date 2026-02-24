@@ -113,7 +113,11 @@ export interface XmlInvoiceData {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  /** IVAP base amount (tipo 17) — separate TaxSubtotal with code 1016 */
+  opIvap?: number;
   igv: number;
+  /** IVAP tax amount (4%) — separate from igv for code 1016 */
+  igvIvap?: number;
   isc: number;
   icbper: number;
   otrosCargos: number;
@@ -165,7 +169,9 @@ export interface XmlCreditNoteData {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  opIvap?: number;
   igv: number;
+  igvIvap?: number;
   isc: number;
   icbper: number;
   totalVenta: number;
@@ -413,7 +419,9 @@ export interface XmlDebitNoteData {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  opIvap?: number;
   igv: number;
+  igvIvap?: number;
   isc: number;
   icbper: number;
   totalVenta: number;

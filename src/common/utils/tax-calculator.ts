@@ -1,17 +1,34 @@
 import { IGV_RATE, IVAP_RATE, ICBPER_RATE, TIPO_AFECTACION_IGV } from '../constants/index.js';
 
 /**
- * Redondear a 2 decimales (SUNAT: redondeo matemático estándar)
+ * Redondear a N decimales usando aritmética de enteros.
+ * Evita errores de punto flotante IEEE 754 que causan
+ * rechazos SUNAT (errores 2508/2510).
+ *
+ * Método: convierte a string, desplaza el punto decimal,
+ * trunca/redondea en enteros, y reconstruye.
  */
-export function round2(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+function safeRound(value: number, decimals: number): number {
+  if (!Number.isFinite(value)) return 0;
+  // Usar exponential notation para evitar errores de multiplicación flotante.
+  // Ejemplo: round(1.005, 2) → Number('1.005e2') = 100.5 → Math.round = 101 → 101e-2 = 1.01
+  return Number(Math.round(Number(value + 'e' + decimals)) + 'e-' + decimals);
 }
 
 /**
- * Redondear a 4 decimales (para valores unitarios)
+ * Redondear a 2 decimales (SUNAT: redondeo matemático estándar).
+ * Usa notación exponencial para evitar errores de punto flotante.
+ */
+export function round2(value: number): number {
+  return safeRound(value, 2);
+}
+
+/**
+ * Redondear a 4 decimales (para valores unitarios).
+ * Usa notación exponencial para evitar errores de punto flotante.
  */
 export function round4(value: number): number {
-  return Math.round((value + Number.EPSILON) * 10000) / 10000;
+  return safeRound(value, 4);
 }
 
 /**
@@ -159,7 +176,11 @@ export interface InvoiceTotals {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  /** IVAP base amount (tipo 17) — tracked separately from opGravadas for XML TaxSubtotal */
+  opIvap: number;
   igv: number;
+  /** IVAP tax amount (4%) — tracked separately from igv for XML TaxSubtotal with code 1016 */
+  igvIvap: number;
   igvGratuitas: number;
   isc: number;
   icbper: number;
@@ -178,7 +199,9 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
   let opExoneradas = 0;
   let opInafectas = 0;
   let opGratuitas = 0;
+  let opIvap = 0;
   let totalIgv = 0;
+  let totalIgvIvap = 0;
   let totalIgvGratuitas = 0;
   let totalIsc = 0;
   let totalIcbper = 0;
@@ -190,6 +213,10 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
     if (isGratuita(tipo)) {
       opGratuitas += item.valorVenta;
       totalIgvGratuitas += item.igv;
+    } else if (isIvap(tipo)) {
+      // IVAP (tipo 17) tracked separately for XML TaxSubtotal with code 1016
+      opIvap += item.valorVenta;
+      totalIgvIvap += item.igv;
     } else if (isGravado(tipo)) {
       opGravadas += item.valorVenta;
       totalIgv += item.igv;
@@ -207,27 +234,22 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
   opExoneradas = round2(opExoneradas);
   opInafectas = round2(opInafectas);
   opGratuitas = round2(opGratuitas);
+  opIvap = round2(opIvap);
   totalIgv = round2(totalIgv);
+  totalIgvIvap = round2(totalIgvIvap);
   totalIgvGratuitas = round2(totalIgvGratuitas);
   totalIsc = round2(totalIsc);
   totalIcbper = round2(totalIcbper);
 
-  // When there's a descuento global, SUNAT requires IGV recalculation
-  // on the net base (opGravadas - proportional discount).
-  if (descuentoGlobal > 0 && opGravadas > 0) {
-    const totalOperaciones = opGravadas + opExoneradas + opInafectas;
-    if (totalOperaciones > 0) {
-      const proporcionGravada = opGravadas / totalOperaciones;
-      const descuentoGravado = round2(descuentoGlobal * proporcionGravada);
-      opGravadas = round2(opGravadas - descuentoGravado);
-      // Recalculate IGV on the reduced base
-      totalIgv = round2(opGravadas * IGV_RATE);
-    }
-  }
+  // SUNAT rule: Document-level TaxTotal IGV MUST equal the sum of
+  // line-level IGV amounts. The global discount (AllowanceCharge code '02')
+  // is declared separately in the XML and reduces only the PayableAmount.
+  // We do NOT recalculate IGV on a net base — that would cause the document
+  // IGV to diverge from the sum of line IGVs, triggering error 2510.
 
   const totalVenta = round2(
-    opGravadas + opExoneradas + opInafectas +
-    totalIgv + totalIsc + totalIcbper +
+    opGravadas + opIvap + opExoneradas + opInafectas +
+    totalIgv + totalIgvIvap + totalIsc + totalIcbper +
     otrosCargos - descuentoGlobal,
   );
 
@@ -236,7 +258,9 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
     opExoneradas,
     opInafectas,
     opGratuitas,
+    opIvap,
     igv: totalIgv,
+    igvIvap: totalIgvIvap,
     igvGratuitas: totalIgvGratuitas,
     isc: totalIsc,
     icbper: totalIcbper,

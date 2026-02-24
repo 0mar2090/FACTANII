@@ -119,6 +119,8 @@ export class CreditNoteBuilder extends BaseXmlBuilder {
       data.opInafectas,
       data.opGratuitas,
       data.moneda,
+      data.opIvap ?? 0,
+      data.igvIvap ?? 0,
     );
 
     // 13. Legal monetary totals
@@ -134,9 +136,13 @@ export class CreditNoteBuilder extends BaseXmlBuilder {
       0, // credit notes don't have otrosCargos
       data.totalVenta,
       data.moneda,
+      data.opIvap ?? 0,
     );
 
-    // 14. Credit note lines
+    // 14. Line count
+    doc.ele('cbc:LineCountNumeric').txt(data.items.length.toString()).up();
+
+    // 15. Credit note lines
     for (let i = 0; i < data.items.length; i++) {
       this.addDocumentLine(
         doc,

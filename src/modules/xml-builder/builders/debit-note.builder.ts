@@ -125,9 +125,14 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
       data.opInafectas,
       data.opGratuitas,
       data.moneda,
+      data.opIvap ?? 0,
+      data.igvIvap ?? 0,
     );
 
-    // 13. Debit note lines (must come BEFORE RequestedMonetaryTotal per UBL 2.1)
+    // 13. Line count
+    doc.ele('cbc:LineCountNumeric').txt(data.items.length.toString()).up();
+
+    // 14. Debit note lines (must come BEFORE RequestedMonetaryTotal per UBL 2.1)
     for (let i = 0; i < data.items.length; i++) {
       this.addDocumentLine(
         doc,
@@ -151,6 +156,7 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
       data.icbper,
       data.totalVenta,
       data.moneda,
+      data.opIvap ?? 0,
     );
 
     return this.serializeXml(doc);
@@ -172,8 +178,9 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
     icbper: number,
     totalVenta: number,
     moneda: string,
+    opIvap = 0,
   ): void {
-    const lineExtension = opGravadas + opExoneradas + opInafectas;
+    const lineExtension = opGravadas + opIvap + opExoneradas + opInafectas;
 
     const monetaryTotal = parent.ele('cac:RequestedMonetaryTotal');
 

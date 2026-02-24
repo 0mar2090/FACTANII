@@ -9,6 +9,7 @@ import {
   CODIGO_TRIBUTO,
   TIPO_PRECIO,
   IGV_RATE,
+  IVAP_RATE,
 } from '../../../common/constants/index.js';
 import {
   isGravado,
@@ -16,6 +17,7 @@ import {
   isInafecto,
   isExportacion,
   isGratuita,
+  isIvap,
 } from '../../../common/utils/tax-calculator.js';
 import type {
   XmlCompany,
@@ -50,9 +52,15 @@ export abstract class BaseXmlBuilder {
 
   /**
    * Format a number to a fixed number of decimal places.
+   *
+   * Uses exponential-notation rounding to avoid IEEE 754 floating-point
+   * errors that cause SUNAT rejections (errors 2508/2510).
+   * Example: (1.005).toFixed(2) = "1.00" (WRONG), this method returns "1.01".
    */
   protected formatAmount(value: number, decimals = 2): string {
-    return value.toFixed(decimals);
+    if (!Number.isFinite(value)) return (0).toFixed(decimals);
+    const rounded = Number(Math.round(Number(value + 'e' + decimals)) + 'e-' + decimals);
+    return rounded.toFixed(decimals);
   }
 
   /**
@@ -260,8 +268,10 @@ export abstract class BaseXmlBuilder {
     opInafectas: number,
     opGratuitas: number,
     moneda: string,
+    opIvap = 0,
+    igvIvap = 0,
   ): void {
-    const totalTaxAmount = igv + isc + icbper;
+    const totalTaxAmount = igv + igvIvap + isc + icbper;
     const taxTotal = parent.ele('cac:TaxTotal');
 
     taxTotal
@@ -270,7 +280,7 @@ export abstract class BaseXmlBuilder {
         .txt(this.formatAmount(totalTaxAmount))
       .up();
 
-    // IGV subtotal (always present when there are gravado operations)
+    // IGV subtotal (always present when there are gravado operations, excluding IVAP)
     if (opGravadas > 0 || igv > 0) {
       this.addTaxSubtotal(
         taxTotal,
@@ -279,6 +289,18 @@ export abstract class BaseXmlBuilder {
         moneda,
         'S',
         CODIGO_TRIBUTO.IGV,
+      );
+    }
+
+    // IVAP subtotal (tipo 17 — separate TaxScheme code 1016 at 4%)
+    if (opIvap > 0 || igvIvap > 0) {
+      this.addTaxSubtotal(
+        taxTotal,
+        opIvap,
+        igvIvap,
+        moneda,
+        'S',
+        CODIGO_TRIBUTO.IVAP,
       );
     }
 
@@ -633,9 +655,12 @@ export abstract class BaseXmlBuilder {
         .txt(categoryId)
       .up();
 
+    const linePercent = isGravado(item.tipoAfectacion)
+      ? (isIvap(item.tipoAfectacion) ? IVAP_RATE * 100 : IGV_RATE * 100)
+      : 0;
     taxCategory
       .ele('cbc:Percent')
-        .txt(isGravado(item.tipoAfectacion) ? (IGV_RATE * 100).toFixed(2) : '0.00')
+        .txt(linePercent.toFixed(2))
       .up();
 
     taxCategory
@@ -720,13 +745,18 @@ export abstract class BaseXmlBuilder {
     tributo: { code: string; name: string; un: string };
   } {
     if (isGratuita(tipoAfectacion)) {
-      // Gratuitas that originate from gravado items (11-17) use IGV scheme
+      // Gratuitas that originate from gravado items (11-16) use IGV scheme
       const code = parseInt(tipoAfectacion, 10);
-      if (code >= 11 && code <= 17) {
+      if (code >= 11 && code <= 16) {
         return { categoryId: 'Z', tributo: CODIGO_TRIBUTO.IGV };
       }
       // Gratuitas from exonerado (21) or inafecto (31-36) use GRATUITO
       return { categoryId: 'Z', tributo: CODIGO_TRIBUTO.GRATUITO };
+    }
+
+    // IVAP (tipo 17) uses tributo code 1016, NOT IGV 1000
+    if (isIvap(tipoAfectacion)) {
+      return { categoryId: 'S', tributo: CODIGO_TRIBUTO.IVAP };
     }
 
     if (isExportacion(tipoAfectacion)) {
@@ -778,8 +808,9 @@ export abstract class BaseXmlBuilder {
     otrosCargos: number,
     totalVenta: number,
     moneda: string,
+    opIvap = 0,
   ): void {
-    const lineExtension = opGravadas + opExoneradas + opInafectas;
+    const lineExtension = opGravadas + opIvap + opExoneradas + opInafectas;
     const taxInclusive = totalVenta;
 
     const monetaryTotal = parent.ele('cac:LegalMonetaryTotal');

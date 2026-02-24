@@ -382,8 +382,11 @@ export class SunatClientService {
    * Validate a CPE document against SUNAT's records.
    *
    * Used to verify that a document exists and is valid in SUNAT's system.
-   * Only available in production environment.
    * SOAP operation: `validaCDPcriterios` on `billValidService`.
+   *
+   * NOTE: This service only exists in SUNAT production. Beta environment
+   * does not expose a `billValidService` endpoint — documents sent to
+   * beta cannot be validated here. This is a SUNAT limitation, not ours.
    */
   async validateCpe(
     ruc: string,
@@ -393,7 +396,8 @@ export class SunatClientService {
     fechaEmision: string,
     monto: number,
   ): Promise<{ valid: boolean; message: string }> {
-    const endpoints = this.resolveEndpoints(false); // Always production
+    // SUNAT only exposes billValidService in production — beta has no equivalent.
+    const endpoints = this.resolveEndpoints(false);
 
     if (!endpoints.consultValid) {
       return { valid: false, message: 'CPE validation is only available in production environment' };
