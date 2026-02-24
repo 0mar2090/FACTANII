@@ -25,6 +25,7 @@
     "format": "prettier --write src/"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.997.0",
     "@fastify/helmet": "^12.0.0",
     "@fastify/multipart": "^9.0.0",
     "@fastify/static": "^8.0.0",

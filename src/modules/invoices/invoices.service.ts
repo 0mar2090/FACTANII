@@ -71,6 +71,7 @@ import type { InvoiceItemDto } from './dto/invoice-item.dto.js';
 import type { InvoiceResponseDto, SummaryResponseDto } from './dto/invoice-response.dto.js';
 import type { CompanyModel } from '../../generated/prisma/models/Company.js';
 import type { InvoiceModel } from '../../generated/prisma/models/Invoice.js';
+import { InvoiceStatus } from '../../generated/prisma/enums.js';
 
 @Injectable()
 export class InvoicesService {
@@ -695,12 +696,12 @@ export class InvoicesService {
     const where: {
       companyId: string;
       tipoDoc?: string;
-      status?: string;
+      status?: InvoiceStatus;
       clienteNumDoc?: string;
       fechaEmision?: { gte?: Date; lte?: Date };
     } = { companyId };
     if (filters?.tipoDoc) where.tipoDoc = filters.tipoDoc;
-    if (filters?.status) where.status = filters.status;
+    if (filters?.status) where.status = filters.status as InvoiceStatus;
     if (filters?.clienteNumDoc) where.clienteNumDoc = filters.clienteNumDoc;
     if (filters?.desde || filters?.hasta) {
       where.fechaEmision = {};
@@ -985,7 +986,7 @@ export class InvoicesService {
 
     // Send to SUNAT (async — returns ticket)
     let ticket: string | undefined;
-    let status = 'SENDING';
+    let status: InvoiceStatus = 'SENDING';
     let sunatMessage: string | undefined;
 
     try {
@@ -1120,7 +1121,7 @@ export class InvoicesService {
 
     // Send to SUNAT (async — returns ticket)
     let ticket: string | undefined;
-    let status = 'SENDING';
+    let status: InvoiceStatus = 'SENDING';
     let sunatMessage: string | undefined;
 
     try {
@@ -1484,7 +1485,7 @@ export class InvoicesService {
     const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
 
     // 9. Send via SUNAT GRE REST API
-    let status = 'SENDING';
+    let status: InvoiceStatus = 'SENDING';
     let sunatCode: string | undefined;
     let sunatMessage: string | undefined;
     let sunatNotes: string[] | undefined;
@@ -1784,9 +1785,13 @@ export class InvoicesService {
 
     const correlativo = result[0].next_correlativo[serieKey]!;
 
-    if (correlativo > 99999999) {
+    // RC/RA series use 5-digit correlativos (1-99999): RC-YYYYMMDD-NNNNN
+    const isRcRaSeries = serieKey.startsWith('RC-') || serieKey.startsWith('RA-');
+    const maxCorrelativo = isRcRaSeries ? 99999 : 99999999;
+
+    if (correlativo > maxCorrelativo) {
       throw new BadRequestException(
-        `Correlativo limit (99999999) exceeded for serie ${serieKey}. Contact support.`,
+        `Correlativo limit (${maxCorrelativo}) exceeded for serie ${serieKey}. Contact support.`,
       );
     }
 
@@ -1907,7 +1912,7 @@ export class InvoicesService {
     const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
     const xmlHash = this.xmlSigner.getXmlHash(signedXml);
 
-    let status = 'SENDING';
+    let status: InvoiceStatus = 'SENDING';
     let sunatCode: string | undefined;
     let sunatMessage: string | undefined;
     let sunatNotes: string[] | undefined;

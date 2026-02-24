@@ -139,6 +139,12 @@ export interface XmlInvoiceData {
   // Documentos relacionados (OC, Guía, etc.)
   documentosRelacionados?: XmlDocumentoRelacionado[];
 
+  // Guía de Remisión vinculada (for DespatchDocumentReference in detracciones)
+  guiaRemision?: {
+    serie: string;
+    correlativo: number;
+  };
+
   // Contingencia: referencia al documento físico emitido en contingencia
   orderReferenceId?: string;
 
@@ -393,6 +399,8 @@ export interface XmlGuideData {
     /** Transport equipment type code (M1, M1L, etc.) */
     tipoEquipo?: string;
   };
+  /** Indicador M1/L: vehicle categories M1 or L can omit plate/license */
+  indicadorM1L?: boolean;
   /** Número de autorización especial (mercancías peligrosas, etc.) */
   autorizacionEspecial?: string;
   items: XmlGuideItem[];

@@ -666,19 +666,32 @@ export class XmlValidatorService {
       });
     }
 
-    // For private transport, vehicle is required
+    // For private transport, vehicle is required (unless M1/L indicator is set)
     if (dto.modalidadTransporte === MODALIDAD_TRANSPORTE.TRANSPORTE_PRIVADO) {
-      if (dto.conductor && !dto.conductor.licencia) {
-        errors.push({
-          field: 'conductor.licencia',
-          message: 'Driver license (licencia) is required for private transport mode',
-        });
-      }
-      if (!dto.vehiculo) {
-        errors.push({
-          field: 'vehiculo',
-          message: 'Vehicle (placa) is required for private transport (modalidad 02)',
-        });
+      if (!dto.indicadorM1L) {
+        if (dto.conductor && !dto.conductor.licencia) {
+          errors.push({
+            field: 'conductor.licencia',
+            message: 'Driver license (licencia) is required for private transport mode (unless indicadorM1L is true)',
+          });
+        }
+        // Validate all conductores have licencia for private transport
+        if (dto.conductores) {
+          for (let i = 0; i < dto.conductores.length; i++) {
+            if (!dto.conductores[i]!.licencia) {
+              errors.push({
+                field: `conductores[${i}].licencia`,
+                message: 'Driver license (licencia) is required for private transport mode (unless indicadorM1L is true)',
+              });
+            }
+          }
+        }
+        if (!dto.vehiculo) {
+          errors.push({
+            field: 'vehiculo',
+            message: 'Vehicle (placa) is required for private transport (modalidad 02)',
+          });
+        }
       }
     }
 

@@ -131,6 +131,21 @@ export class InvoiceBuilder extends BaseXmlBuilder {
       this.addDetraccion(doc, data);
     }
 
+    // 12b2. DespatchDocumentReference — linked Guía de Remisión
+    if (data.guiaRemision) {
+      const despatchRef = doc.ele('cac:DespatchDocumentReference');
+      const greCorrelativo = String(data.guiaRemision.correlativo).padStart(8, '0');
+      despatchRef.ele('cbc:ID').txt(`${data.guiaRemision.serie}-${greCorrelativo}`).up();
+      despatchRef
+        .ele('cbc:DocumentTypeCode')
+          .att('listAgencyName', 'PE:SUNAT')
+          .att('listName', 'Tipo de Documento')
+          .att('listURI', 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01')
+          .txt('09')
+        .up();
+      despatchRef.up();
+    }
+
     // 12c. Anticipos (PrepaidPayment)
     if (data.anticipos && data.anticipos.length > 0) {
       for (const anticipo of data.anticipos) {

@@ -219,6 +219,11 @@ export class GuideBuilder extends BaseXmlBuilder {
     despatchAddress.up();
     despatch.up();
 
+    // Indicador M1/L — vehicle categories M1 or L can omit plate/license
+    if (data.indicadorM1L) {
+      shipment.ele('cbc:SpecialInstructions').txt('SUNAT_Envio_IndicadorTrasladoVehiculoM1L').up();
+    }
+
     // Special authorization (hazardous goods, etc.)
     if (data.autorizacionEspecial) {
       shipment

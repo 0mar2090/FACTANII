@@ -1,8 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { PdfGeneratorService } from '../../pdf-generator/pdf-generator.service.js';
 import type { PdfInvoiceData, PdfInvoiceItem } from '../../pdf-generator/interfaces/pdf-data.interface.js';
@@ -15,6 +15,9 @@ const TIPO_DOC_NOMBRES: Record<string, string> = {
   '03': 'BOLETA DE VENTA ELECTRÓNICA',
   '07': 'NOTA DE CRÉDITO ELECTRÓNICA',
   '08': 'NOTA DE DÉBITO ELECTRÓNICA',
+  '09': 'GUÍA DE REMISIÓN ELECTRÓNICA',
+  '20': 'COMPROBANTE DE RETENCIÓN ELECTRÓNICA',
+  '40': 'COMPROBANTE DE PERCEPCIÓN ELECTRÓNICA',
 };
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
@@ -28,12 +31,32 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 })
 export class PdfGenerateProcessor extends WorkerHost {
   private readonly logger = new Logger(PdfGenerateProcessor.name);
+  private readonly s3Client: S3Client;
+  private readonly bucketName: string;
+  private readonly publicUrl: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdfGenerator: PdfGeneratorService,
+    private readonly configService: ConfigService,
   ) {
     super();
+
+    const accountId = this.configService.get<string>('R2_ACCOUNT_ID', '');
+    const accessKeyId = this.configService.get<string>('R2_ACCESS_KEY_ID', '');
+    const secretAccessKey = this.configService.get<string>('R2_SECRET_ACCESS_KEY', '');
+    this.bucketName = this.configService.get<string>('R2_BUCKET_NAME', 'anii-media');
+    this.publicUrl = this.configService.get<string>('R2_PUBLIC_URL', '');
+
+    this.s3Client = new S3Client({
+      region: 'auto',
+      endpoint: accountId
+        ? `https://${accountId}.r2.cloudflarestorage.com`
+        : undefined,
+      credentials: (accessKeyId && secretAccessKey)
+        ? { accessKeyId, secretAccessKey }
+        : undefined,
+    });
   }
 
   async process(job: Job<PdfGenerateJobData>): Promise<void> {
@@ -107,6 +130,7 @@ export class PdfGenerateProcessor extends WorkerHost {
       sunatMessage: invoice.sunatMessage ?? undefined,
       formaPago: invoice.formaPago,
       motivoNota: invoice.motivoNota ?? undefined,
+      motivoDescripcion: invoice.motivoNota ?? undefined,
       docRefSerie: invoice.docRefSerie ?? undefined,
       docRefCorrelativo: invoice.docRefCorrelativo ?? undefined,
     };
@@ -119,23 +143,30 @@ export class PdfGenerateProcessor extends WorkerHost {
       pdfBuffer = await this.pdfGenerator.generateA4(pdfData);
     }
 
-    // 5. Store to local storage/pdfs/ directory
+    // 5. Upload to Cloudflare R2
     const correlativoPadded = String(invoice.correlativo).padStart(8, '0');
-    const pdfDir = join(process.cwd(), 'storage', 'pdfs', company.ruc);
-    await mkdir(pdfDir, { recursive: true });
     const pdfFileName = `${invoice.serie}-${correlativoPadded}.pdf`;
-    const pdfPath = join(pdfDir, pdfFileName);
-    await writeFile(pdfPath, pdfBuffer);
+    const r2Key = `pdfs/${company.ruc}/${pdfFileName}`;
 
-    // 6. Update invoice.pdfUrl in DB
-    const pdfUrl = `storage/pdfs/${company.ruc}/${pdfFileName}`;
+    await this.s3Client.send(new PutObjectCommand({
+      Bucket: this.bucketName,
+      Key: r2Key,
+      Body: pdfBuffer,
+      ContentType: 'application/pdf',
+    }));
+
+    // 6. Build public URL and update invoice.pdfUrl in DB
+    const pdfUrl = this.publicUrl
+      ? `${this.publicUrl}/${r2Key}`
+      : r2Key;
+
     await this.prisma.client.invoice.update({
       where: { id: invoiceId },
       data: { pdfUrl },
     });
 
     this.logger.log(
-      `PDF generated for invoice ${invoice.serie}-${correlativoPadded}: ${pdfUrl} (${pdfBuffer.length} bytes)`,
+      `PDF uploaded to R2 for invoice ${invoice.serie}-${correlativoPadded}: ${pdfUrl} (${pdfBuffer.length} bytes)`,
     );
   }
 }

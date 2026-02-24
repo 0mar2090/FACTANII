@@ -144,6 +144,16 @@ model Certificate {
 // COMPROBANTES ELECTRÓNICOS
 // ═══════════════════════════════════════
 
+enum InvoiceStatus {
+  DRAFT
+  PENDING
+  QUEUED
+  SENDING
+  ACCEPTED
+  REJECTED
+  OBSERVED
+}
+
 model Invoice {
   id        String @id @default(cuid())
   companyId String @map("company_id")
@@ -210,7 +220,7 @@ model Invoice {
   xmlSigned  Boolean  @default(false) @map("xml_signed")
 
   // Estado SUNAT
-  status       String  @default("DRAFT")
+  status       InvoiceStatus @default(DRAFT)
   sunatCode    String? @map("sunat_code")
   sunatMessage String? @map("sunat_message")
   sunatNotes   Json?   @map("sunat_notes")

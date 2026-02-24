@@ -6,6 +6,7 @@ import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import type { Job, Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import type { InvoiceStatus } from '../../../generated/prisma/enums.js';
 import { SunatClientService } from '../../sunat-client/sunat-client.service.js';
 import { CdrProcessorService } from '../../cdr-processor/cdr-processor.service.js';
 import { CompaniesService } from '../../companies/companies.service.js';
@@ -76,8 +77,18 @@ export class InvoiceSendProcessor extends WorkerHost {
 
     // Skip if already in a terminal state
     if (invoice.status === 'ACCEPTED' || invoice.status === 'OBSERVED') {
-      this.logger.log(
-        `Invoice ${invoiceId} already ${invoice.status} — skipping`,
+      this.logger.warn(
+        `Invoice ${invoiceId} (${invoice.serie}-${invoice.correlativo}, tipoDoc=${invoice.tipoDoc}) already ${invoice.status} — skipping send. ` +
+        `SUNAT code=${invoice.sunatCode ?? 'N/A'}, sentAt=${invoice.sentAt?.toISOString() ?? 'N/A'}`,
+      );
+      return;
+    }
+
+    // Skip if rejected and reached max attempts
+    if (invoice.status === 'REJECTED') {
+      this.logger.warn(
+        `Invoice ${invoiceId} (${invoice.serie}-${invoice.correlativo}) already REJECTED — ` +
+        `SUNAT code=${invoice.sunatCode ?? 'N/A'}, message=${invoice.sunatMessage ?? 'N/A'}. Not retrying.`,
       );
       return;
     }
@@ -163,7 +174,7 @@ export class InvoiceSendProcessor extends WorkerHost {
     if (result.success && result.cdrZip) {
       const cdr = this.cdrProcessor.processCdr(result.cdrZip);
 
-      let status: string;
+      let status: InvoiceStatus;
       if (cdr.isAccepted) {
         status = cdr.hasObservations ? 'OBSERVED' : 'ACCEPTED';
       } else {

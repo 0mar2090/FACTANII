@@ -237,6 +237,11 @@ export class CreateGuideDto {
   @Type(() => GuideVehiculoDto)
   vehiculo?: GuideVehiculoDto;
 
+  /** Indicador M1/L: vehicle categories M1 or L can omit plate and license */
+  @IsBoolean()
+  @IsOptional()
+  indicadorM1L?: boolean;
+
   /** Número de autorización especial (mercancías peligrosas, etc.) */
   @IsString()
   @IsOptional()

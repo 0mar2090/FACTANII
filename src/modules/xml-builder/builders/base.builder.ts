@@ -447,6 +447,10 @@ export abstract class BaseXmlBuilder {
    */
   protected resolveTaxPercent(tributoCode: string, taxableAmount: number, taxAmount: number): number {
     if (tributoCode === CODIGO_TRIBUTO.IGV.code) {
+      // Derive rate from actual amounts to support MYPE 10.50% (Ley 32357)
+      if (taxableAmount > 0 && taxAmount > 0) {
+        return Math.round((taxAmount / taxableAmount) * 10000) / 100;
+      }
       return IGV_RATE * 100;
     }
     if (tributoCode === CODIGO_TRIBUTO.IVAP?.code) {
@@ -669,7 +673,11 @@ export abstract class BaseXmlBuilder {
       .up();
 
     const linePercent = isGravado(item.tipoAfectacion)
-      ? (isIvap(item.tipoAfectacion) ? IVAP_RATE * 100 : IGV_RATE * 100)
+      ? (isIvap(item.tipoAfectacion)
+        ? IVAP_RATE * 100
+        : (item.valorVenta > 0 && item.igv > 0
+          ? Math.round((item.igv / item.valorVenta) * 10000) / 100
+          : IGV_RATE * 100))
       : 0;
     taxCategory
       .ele('cbc:Percent')
