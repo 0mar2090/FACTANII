@@ -20,6 +20,7 @@
 - [API Endpoints](#api-endpoints)
 - [Flujo de Facturacion](#flujo-de-facturacion)
 - [Colas de Procesamiento](#colas-de-procesamiento)
+- [Impuestos Soportados](#impuestos-soportados)
 - [Seguridad](#seguridad)
 - [Testing](#testing)
 - [Docker](#docker)
@@ -56,14 +57,22 @@
 - Envio REST API con OAuth2 para Guia de Remision Electronica (GRE)
 - Procesamiento de CDR (Constancia de Recepcion) automatico
 - Generacion de PDF en formatos A4 y ticket 80mm (pdfmake + QR)
+- Emision masiva (batch) de hasta 50 comprobantes por request
 - Emails transaccionales con adjuntos XML/PDF (Resend)
 - Webhooks salientes con HMAC-SHA256 para notificaciones en tiempo real
-- Sistema de colas con reintentos y backoff exponencial (BullMQ)
+- Dead Letter Queue (DLQ) para jobs fallidos con review manual
+- Sistema de 7 colas con reintentos y backoff exponencial (BullMQ)
 - Polling automatico de tickets con backoff exponencial
 - Multi-tenancy con Row-Level Security en PostgreSQL
+- Soporte IVAP (Arroz Pilado 4%), detracciones (SPOT), exportaciones
+- IGV reducido 10.5% para MYPEs restaurantes/hoteles (Ley 32357)
 - Suscripciones y planes con Mercado Pago
+- Dashboard con resumen de emision y reporte mensual PDT 621
+- Migracion beta a produccion con validacion de requisitos
 - Consultas gratuitas: RUC, DNI, tipo de cambio, validar CPE
 - Validacion pre-envio contra reglas SUNAT por tipo de documento
+- Correlation ID (`X-Request-ID`) en todas las respuestas
+- Health checks: base de datos, Redis, memoria heap, disco
 
 ---
 
@@ -78,17 +87,18 @@
 | Colas           | BullMQ 5.66 + Redis 7                            |
 | XML             | xmlbuilder2 4 (UBL 2.1) + fast-xml-parser 5 (CDR)|
 | Firma digital   | xml-crypto 6 (XMLDSig) + node-forge 1.3 (PFX)   |
-| SOAP            | node-soap 1.1 (WS-Security)                     |
+| SOAP            | node-soap 1.1 (WS-Security) + WSDLs locales     |
 | REST (GRE)      | axios 1.13 (OAuth2 + REST API SUNAT)             |
 | PDF             | pdfmake 0.3 (A4 + ticket 80mm) + qrcode 1.5     |
 | Pagos           | mercadopago 2.12 (PreApproval)                   |
 | Email           | Resend 6.9                                       |
 | Auth            | JWT (access 15min + refresh 7d) + API Keys       |
 | Validacion      | class-validator 0.14 + class-transformer 0.5     |
-| Rate Limiting   | @nestjs/throttler 6.5                            |
+| Rate Limiting   | @nestjs/throttler 6.5 (3 tiers configurables)    |
 | Multi-tenancy   | nestjs-cls 4.5 (AsyncLocalStorage) + PG RLS      |
+| Uploads         | @fastify/multipart 9 (5MB limit)                 |
 | Docs            | @nestjs/swagger 11 + @fastify/swagger 9          |
-| Testing         | Vitest 3 + Supertest 7 (255 tests)               |
+| Testing         | Vitest 3 + Supertest 7 (~566 tests, 28 spec files) |
 | Monitoreo       | Sentry 10 + Health Checks (@nestjs/terminus 11)  |
 | Package Manager | pnpm 9+                                          |
 
@@ -120,16 +130,16 @@
     │       │                      ▼                                      │
     │       │     ┌─────────┐    ┌──────────────────┐                    │
     │       │     │ BullMQ  │<───│ CDR Processor    │                    │
-    │       │     │ 5 Colas │    │ (fast-xml-parser)│                    │
+    │       │     │ 7 Colas │    │ (fast-xml-parser)│                    │
     │       │     └────┬────┘    └──────────────────┘                    │
     │       │          │                                                  │
-    │       │     ┌────┴──────────────────────┐                          │
-    │       │     │          │         │      │                           │
-    │       │     ▼          ▼         ▼      ▼                          │
-    │       │  ┌──────┐  ┌───────┐  ┌─────┐  ┌──────────┐              │
-    │       │  │ PDF  │  │ Email │  │Poll │  │ Webhooks │               │
-    │       │  │ Gen  │  │ Send  │  │Ticket│  │ Dispatch │              │
-    │       │  └──────┘  └───────┘  └─────┘  └──────────┘              │
+    │       │     ┌────┴───────────────────────────────┐                 │
+    │       │     │          │         │      │        │                 │
+    │       │     ▼          ▼         ▼      ▼        ▼                 │
+    │       │  ┌──────┐  ┌───────┐  ┌─────┐  ┌────┐  ┌─────┐           │
+    │       │  │ PDF  │  │ Email │  │Poll │  │Hook│  │ DLQ │           │
+    │       │  │ Gen  │  │ Send  │  │Tick.│  │Send│  │     │           │
+    │       │  └──────┘  └───────┘  └─────┘  └────┘  └─────┘           │
     │       │                                                             │
     │  ┌────┴────────────────────────────────────────────────────────┐    │
     │  │                  PostgreSQL 16 (RLS)                        │    │
@@ -155,23 +165,23 @@
 git clone <repo-url> facturape-backend
 cd facturape-backend
 
-# 2. Copiar variables de entorno
-cp .env.example .env
+# 2. Instalar dependencias
+pnpm install
 
 # 3. Levantar servicios de infraestructura
 docker compose up -d postgres redis
 
-# 4. Instalar dependencias
-pnpm install
-
-# 5. Generar Prisma Client
+# 4. Generar Prisma Client
 pnpm db:generate
 
-# 6. Ejecutar migraciones
+# 5. Ejecutar migraciones
 pnpm db:migrate
 
-# 7. Seed de datos iniciales (planes de suscripcion)
+# 6. Seed de datos iniciales (planes de suscripcion)
 pnpm db:seed
+
+# 7. (Opcional) Aplicar politicas RLS
+psql -U facturape -d facturape -f database/rls-policies.sql
 
 # 8. Iniciar en modo desarrollo
 pnpm dev
@@ -183,7 +193,7 @@ pnpm dev
 # API Health Check
 curl http://localhost:3000/api/v1/health
 
-# Swagger UI
+# Swagger UI (solo en desarrollo)
 open http://localhost:3000/docs
 ```
 
@@ -196,6 +206,7 @@ open http://localhost:3000/docs
 | `NODE_ENV`                 | Entorno de ejecucion                           | `development`               |
 | `PORT`                     | Puerto del servidor                            | `3000`                      |
 | `API_PREFIX`               | Prefijo global de rutas                        | `api/v1`                    |
+| `CORS_ORIGIN`              | Origenes CORS permitidos                       | `http://localhost:3001`     |
 | `DATABASE_URL`             | Conexion PostgreSQL                            | (requerido)                 |
 | `REDIS_HOST`               | Host de Redis                                  | `localhost`                 |
 | `REDIS_PORT`               | Puerto de Redis                                | `6379`                      |
@@ -204,11 +215,10 @@ open http://localhost:3000/docs
 | `JWT_REFRESH_SECRET`       | Secret para refresh tokens                     | (requerido)                 |
 | `JWT_REFRESH_EXPIRATION`   | Expiracion del refresh token                   | `7d`                        |
 | `ENCRYPTION_KEY`           | Clave AES-256-GCM (64 hex chars)               | (requerido)                 |
-| `SUNAT_ENV`                | Entorno SUNAT: `beta` o `prod`                 | `beta`                      |
+| `SUNAT_ENV`                | Entorno SUNAT: `beta` o `production`           | `beta`                      |
 | `SUNAT_BETA_RUC`           | RUC de pruebas beta                            | `20000000001`               |
 | `SUNAT_BETA_USER`          | Usuario SOL de pruebas beta                    | `MODDATOS`                  |
 | `SUNAT_BETA_PASS`          | Clave SOL de pruebas beta                      | `moddatos`                  |
-| `SUNAT_SOAP_TIMEOUT`       | Timeout SOAP en ms                             | `60000`                     |
 | `SUNAT_GRE_CLIENT_ID`      | Client ID OAuth2 para API GRE                  | (requerido para GRE)        |
 | `SUNAT_GRE_CLIENT_SECRET`  | Client Secret OAuth2 para API GRE              | (requerido para GRE)        |
 | `MP_ACCESS_TOKEN`          | Token de Mercado Pago                          | (opcional)                  |
@@ -216,6 +226,12 @@ open http://localhost:3000/docs
 | `RESEND_API_KEY`           | API Key de Resend para emails                  | (opcional)                  |
 | `EMAIL_FROM`               | Direccion de remitente                         | `facturas@facturape.com`    |
 | `SENTRY_DSN`               | DSN de Sentry para error tracking              | (opcional)                  |
+| `RATE_LIMIT_SHORT_TTL`     | Ventana corta en ms                            | `1000`                      |
+| `RATE_LIMIT_SHORT_LIMIT`   | Limite ventana corta                           | `3`                         |
+| `RATE_LIMIT_MEDIUM_TTL`    | Ventana media en ms                            | `10000`                     |
+| `RATE_LIMIT_MEDIUM_LIMIT`  | Limite ventana media                           | `20`                        |
+| `RATE_LIMIT_LONG_TTL`      | Ventana larga en ms                            | `60000`                     |
+| `RATE_LIMIT_LONG_LIMIT`    | Limite ventana larga                           | `100`                       |
 
 **Generar `ENCRYPTION_KEY`:**
 ```bash
@@ -242,7 +258,7 @@ pnpm db:studio             # Prisma Studio (UI visual para BD)
 pnpm db:reset              # Reset completo de BD + migraciones
 
 # Testing
-pnpm test                  # Unit tests con Vitest (255 tests)
+pnpm test                  # Unit tests con Vitest (~566 tests)
 pnpm test:e2e              # Tests end-to-end
 pnpm test:cov              # Tests con reporte de cobertura
 
@@ -259,13 +275,23 @@ Todos los endpoints estan bajo el prefijo `/api/v1/`. Autenticacion requerida sa
 
 ### Autenticacion
 
+| Metodo | Ruta                          | Descripcion                     | Auth     |
+|--------|-------------------------------|---------------------------------|----------|
+| POST   | `/auth/register`              | Registro de usuario             | Publica  |
+| POST   | `/auth/login`                 | Login (retorna JWT + refresh)   | Publica  |
+| POST   | `/auth/refresh`               | Renovar access token            | Publica  |
+| POST   | `/auth/logout`                | Cerrar sesion (revocar token)   | JWT      |
+| PATCH  | `/auth/password`              | Cambiar contrasena              | JWT      |
+| POST   | `/auth/api-keys`              | Crear API Key                   | Roles    |
+| DELETE | `/auth/api-keys/:id`          | Revocar API Key                 | Roles    |
+
+### Usuarios
+
 | Metodo | Ruta                          | Descripcion                     |
 |--------|-------------------------------|---------------------------------|
-| POST   | `/auth/register`              | Registro de usuario             |
-| POST   | `/auth/login`                 | Login (retorna JWT + refresh)   |
-| POST   | `/auth/refresh`               | Renovar access token            |
-| POST   | `/auth/api-keys`              | Crear API Key                   |
-| DELETE | `/auth/api-keys/:id`          | Revocar API Key                 |
+| GET    | `/users/me`                   | Perfil del usuario autenticado  |
+| PUT    | `/users/me`                   | Actualizar perfil               |
+| GET    | `/users/me/companies`         | Empresas del usuario            |
 
 ### Empresas (Tenants)
 
@@ -276,9 +302,13 @@ Todos los endpoints estan bajo el prefijo `/api/v1/`. Autenticacion requerida sa
 | GET    | `/companies/:id`                        | Detalle de empresa              |
 | PUT    | `/companies/:id`                        | Actualizar empresa              |
 | POST   | `/companies/:id/certificate`            | Subir certificado .pfx          |
+| GET    | `/companies/:id/certificate`            | Info del certificado activo     |
 | PUT    | `/companies/:id/sol-credentials`        | Configurar clave SOL            |
+| GET    | `/companies/:id/migration-status`       | Verificar requisitos migracion  |
+| POST   | `/companies/:id/migrate-to-production`  | Migrar de beta a produccion     |
+| POST   | `/companies/:id/revert-to-beta`         | Revertir a modo beta            |
 
-### Comprobantes Electronicos (9 tipos)
+### Comprobantes Electronicos (9 tipos + batch)
 
 | Metodo | Ruta                                    | Descripcion                       |
 |--------|-----------------------------------------|-----------------------------------|
@@ -291,12 +321,20 @@ Todos los endpoints estan bajo el prefijo `/api/v1/`. Autenticacion requerida sa
 | POST   | `/invoices/guia-remision`               | Emitir Guia de Remision (09)      |
 | POST   | `/invoices/resumen-diario`              | Enviar Resumen Diario (RC)        |
 | POST   | `/invoices/comunicacion-baja`           | Enviar Comunicacion de Baja (RA)  |
-| GET    | `/invoices`                             | Listar comprobantes (con filtros) |
+| POST   | `/invoices/batch`                       | Emision masiva (max 50 comprobantes) |
+
+### Consultas y descargas
+
+| Metodo | Ruta                                    | Descripcion                       |
+|--------|-----------------------------------------|-----------------------------------|
+| GET    | `/invoices`                             | Listar comprobantes (con filtros y paginacion) |
 | GET    | `/invoices/:id`                         | Detalle de comprobante            |
 | GET    | `/invoices/:id/xml`                     | Descargar XML firmado             |
-| GET    | `/invoices/:id/pdf`                     | Descargar PDF                     |
+| GET    | `/invoices/:id/pdf`                     | Descargar PDF (?format=a4\|ticket)|
 | GET    | `/invoices/:id/cdr`                     | Descargar CDR (ZIP)               |
 | POST   | `/invoices/:id/resend`                  | Reenviar a SUNAT                  |
+| GET    | `/invoices/:id/consult-cdr`             | Consultar CDR en SUNAT (solo prod)|
+| POST   | `/invoices/:id/anular-guia`             | Anular Guia de Remision via GRE   |
 
 ### Webhooks
 
@@ -306,23 +344,36 @@ Todos los endpoints estan bajo el prefijo `/api/v1/`. Autenticacion requerida sa
 | GET    | `/webhooks`                             | Listar webhooks activos         |
 | DELETE | `/webhooks/:id`                         | Desactivar webhook              |
 
-### Consultas
+### Consultas gratuitas
+
+| Metodo | Ruta                                    | Descripcion                     | Auth     |
+|--------|-----------------------------------------|---------------------------------|----------|
+| GET    | `/consultas/ruc/:ruc`                   | Consultar RUC                   | Publica  |
+| GET    | `/consultas/dni/:dni`                   | Consultar DNI                   | Publica  |
+| GET    | `/consultas/tipo-cambio`                | Tipo de cambio del dia          | Publica  |
+| GET    | `/consultas/validar-cpe`                | Validar CPE en SUNAT            | Publica  |
+
+### Billing y suscripciones
+
+| Metodo | Ruta                                    | Descripcion                     | Auth     |
+|--------|-----------------------------------------|---------------------------------|----------|
+| GET    | `/billing/plans`                        | Listar planes disponibles       | Publica  |
+| GET    | `/billing/subscriptions/current`        | Suscripcion activa              | JWT      |
+| POST   | `/billing/subscriptions`                | Crear suscripcion               | JWT      |
+| POST   | `/billing/webhook`                      | IPN Mercado Pago                | Publica  |
+
+### Dashboard
 
 | Metodo | Ruta                                    | Descripcion                     |
 |--------|-----------------------------------------|---------------------------------|
-| GET    | `/consultas/ruc/:ruc`                   | Consultar RUC                   |
-| GET    | `/consultas/dni/:dni`                   | Consultar DNI                   |
-| GET    | `/consultas/tipo-cambio`                | Tipo de cambio del dia          |
-| GET    | `/consultas/validar-cpe`                | Validar CPE en SUNAT            |
+| GET    | `/dashboard/summary`                    | Resumen emision por estado y tipo (?from, ?to) |
+| GET    | `/dashboard/monthly-report`             | Reporte mensual PDT 621 (?year, ?month)        |
 
-### Suscripciones
+### Health check
 
-| Metodo | Ruta                                    | Descripcion                     |
-|--------|-----------------------------------------|---------------------------------|
-| GET    | `/plans`                                | Listar planes disponibles       |
-| GET    | `/subscriptions/current`                | Suscripcion activa              |
-| POST   | `/subscriptions`                        | Crear suscripcion               |
-| POST   | `/billing/webhook`                      | IPN Mercado Pago                |
+| Metodo | Ruta                                    | Descripcion                     | Auth     |
+|--------|-----------------------------------------|---------------------------------|----------|
+| GET    | `/health`                               | DB, Redis, memoria, disco       | Publica  |
 
 ---
 
@@ -418,15 +469,17 @@ FacturaPE soporta 3 flujos de emision segun el tipo de documento:
 
 ## Colas de Procesamiento
 
-El sistema utiliza BullMQ con Redis para procesamiento asincrono. Cada cola tiene configuracion independiente de reintentos y concurrencia.
+El sistema utiliza BullMQ con Redis para procesamiento asincrono. 7 colas con configuracion independiente de reintentos y concurrencia.
 
 | Cola             | Funcion                        | Reintentos | Backoff      | Concurrencia | Rate Limit  |
 |------------------|--------------------------------|------------|--------------|--------------|-------------|
 | `invoice-send`   | Envio a SUNAT via SOAP         | 5          | 2s exp       | 5            | 10 jobs/s   |
-| `pdf-generate`   | Generacion de PDF (A4/ticket)  | 3          | 2s exp       | 5            | -           |
-| `email-send`     | Envio de emails con adjuntos   | 3          | 2s exp       | 5            | -           |
 | `summary-send`   | RC/RA a SUNAT (sendSummary)    | 5          | 2s exp       | 5            | 10 jobs/s   |
 | `ticket-poll`    | Polling getStatus para tickets | 15         | 10s exp (max 5min) | 3      | -           |
+| `pdf-generate`   | Generacion de PDF (A4/ticket)  | 3          | 3s exp       | 5            | -           |
+| `email-send`     | Envio de emails con adjuntos   | 3          | 1s exp       | 5            | -           |
+| `webhook-send`   | Notificaciones HMAC-signed     | 3          | 5s exp       | 3            | -           |
+| `dead-letter-queue` | Jobs fallidos permanentemente | -          | -            | -            | -           |
 
 ### Pipeline post-envio
 
@@ -436,9 +489,28 @@ Tras recibir respuesta de SUNAT, el procesador dispara automaticamente:
 2. **PDF** - Genera el PDF A4 y lo almacena
 3. **Email** - Si el cliente tiene email, envia el comprobante con XML adjunto
 
+### Dead Letter Queue
+
+El `DlqListener` monitorea las 5 colas principales (invoice-send, summary-send, ticket-poll, pdf-generate, email-send). Cuando un job agota todos sus reintentos, se mueve automaticamente al DLQ para revision manual.
+
 ### Ticket Polling
 
 Para documentos asincronos (RC, RA, GRE), el sistema encola un job `ticket-poll` con el ticket SUNAT. El processor consulta `getStatus` con backoff exponencial (10s base, maximo 5 minutos entre intentos, hasta 15 reintentos). El campo `documentType` ('summary' | 'voided' | 'guide') determina el flujo de procesamiento post-respuesta.
+
+---
+
+## Impuestos Soportados
+
+| Impuesto | Tasa | Catalogo | Notas |
+|----------|------|----------|-------|
+| IGV | 18% | Cat 05 (1000) | Tasa general |
+| IGV Restaurantes MYPEs | 10.5% | Cat 05 (1000) | Ley 32357, vigente desde ene 2026 |
+| IVAP (Arroz Pilado) | 4% | Cat 05 (1016) | Tipo afectacion 17 |
+| ISC | Variable | Cat 05 (2000) | Por tipo de producto |
+| ICBPER (Bolsas Plasticas) | S/ 0.50 | Cat 05 (7152) | Por unidad |
+| Retenciones | 3% / 6% | Cat 23 | Regimen 01 / 02 |
+| Percepciones | 0.5% / 1% / 2% | Cat 22 | Regimen 03 / 02 / 01 |
+| Detracciones (SPOT) | Variable por codigo | Cat 54 | Umbral S/ 700, Cat 54 Anexo I/II/III |
 
 ---
 
@@ -456,15 +528,18 @@ Para documentos asincronos (RC, RA, GRE), el sistema encola un job `ticket-poll`
 - Certificados `.pfx` cifrados con **AES-256-GCM** antes de almacenar en BD
 - Claves SOL cifradas con **AES-256-GCM** (con IV y authTag separados)
 - Master key via variable de entorno `ENCRYPTION_KEY` (32 bytes hex)
+- Validacion de ENCRYPTION_KEY al startup (fail-fast si no es 64 hex chars)
 - Webhooks firmados con HMAC-SHA256
 
 ### Rate Limiting
 
-| Ventana   | Limite      |
-|-----------|-------------|
-| 1 segundo | 3 requests  |
-| 10 seg    | 20 requests |
-| 1 minuto  | 100 requests|
+Tres tiers configurables via variables de entorno:
+
+| Ventana   | Limite      | Variables env                      |
+|-----------|-------------|-------------------------------------|
+| 1 segundo | 3 requests  | `RATE_LIMIT_SHORT_TTL/LIMIT`       |
+| 10 seg    | 20 requests | `RATE_LIMIT_MEDIUM_TTL/LIMIT`      |
+| 1 minuto  | 100 requests| `RATE_LIMIT_LONG_TTL/LIMIT`        |
 
 ### Multi-tenancy
 
@@ -472,7 +547,14 @@ Para documentos asincronos (RC, RA, GRE), el sistema encola un job `ticket-poll`
 - `nestjs-cls` almacena el tenant en AsyncLocalStorage
 - Prisma Client Extension ejecuta `SET tenancy.tenant_id` antes de cada query
 - Politicas RLS en PostgreSQL filtran datos automaticamente
+- Tablas con RLS: `invoices`, `invoice_items`, `certificates`, `api_keys`, `webhooks`, `subscriptions`
 - Decorator `@SkipTenant()` para rutas sin contexto de empresa
+
+### Headers y CORS
+
+- Helmet con CSP environment-aware via `@fastify/helmet`
+- CORS configurable via `CORS_ORIGIN` (default: `localhost:3001`)
+- Correlation ID (`X-Request-ID`) generado y propagado en todas las respuestas
 
 ---
 
@@ -489,28 +571,66 @@ pnpm test:cov
 pnpm test:e2e
 ```
 
-### Suites de test (255 tests, 13 archivos)
+### Suites de test (~566 tests, 28 spec files + 4 e2e files)
 
-| Suite                                | Tests | Descripcion                                |
-|--------------------------------------|-------|--------------------------------------------|
-| `tax-calculator.spec.ts`             | 22    | Calculo de IGV, ISC, ICBPER, totales       |
-| `amount-to-words.spec.ts`            | —     | Montos en letras (espanol)                 |
-| `encryption.spec.ts`                 | —     | AES-256-GCM encrypt/decrypt               |
-| `ruc-validator.spec.ts`              | —     | Validacion modulo 11 RUC                   |
-| `zip.spec.ts`                        | —     | Utilidades ZIP                             |
-| `cdr-processor.service.spec.ts`      | 7     | Parseo de CDR SUNAT (aceptado/rechazado)   |
-| `xml-signer.service.spec.ts`         | 5     | Firma XMLDSig, hash SHA-256                |
-| `xml-builders.spec.ts`               | —     | Builders XML (invoice, NC, ND, summary, voided) |
-| `xml-validator.spec.ts`              | —     | Validacion pre-envio                       |
-| `retention-perception.spec.ts`       | —     | Builders retencion y percepcion            |
-| `guide.spec.ts`                      | —     | Builder guia de remision                   |
-| `pdf-generator.service.spec.ts`      | 3     | Generacion PDF A4 y ticket                 |
+**Utilidades (common/utils/):**
+
+| Suite | Descripcion |
+|-------|-------------|
+| `tax-calculator.spec.ts` | Calculo IGV/ISC/ICBPER/IVAP, totales |
+| `tax-calculator-*.spec.ts` (7 archivos) | Detracciones, exportaciones, gratuitas, ISC, IVAP, MYPEs |
+| `amount-to-words.spec.ts` | Montos en letras (espanol) |
+| `encryption.spec.ts` | AES-256-GCM encrypt/decrypt |
+| `ruc-validator.spec.ts` | Validacion modulo 11 RUC |
+| `zip.spec.ts` | Utilidades ZIP |
+| `peru-date.spec.ts` | Fechas zona horaria Peru (UTC-5) |
+
+**Builders XML:**
+
+| Suite | Descripcion |
+|-------|-------------|
+| `xml-builders.spec.ts` | Invoice, NC, ND, Summary, Voided |
+| `credit-debit-note.spec.ts` | Builders NC y ND especificos |
+| `invoice-builder-features.spec.ts` | Features avanzados (IVAP, detracciones, anticipos) |
+| `retention-perception.spec.ts` | Builders retencion y percepcion |
+| `guide.spec.ts` | Builder guia de remision |
+
+**Validadores XML:**
+
+| Suite | Descripcion |
+|-------|-------------|
+| `xml-validator.spec.ts` | Validacion pre-envio basica |
+| `xml-validator-new-docs.spec.ts` | Validacion docs nuevos |
+| `xml-validator-complete.spec.ts` | Validacion completa |
+| `xml-validator-deep.spec.ts` | Validacion profunda |
+| `xml-validator-retention-perception.spec.ts` | Validacion CRE/CPE |
+
+**Servicios:**
+
+| Suite | Descripcion |
+|-------|-------------|
+| `invoices.service.spec.ts` | Orquestacion de emision |
+| `sunat-client.spec.ts` | Clientes SOAP y GRE |
+| `xml-signer.service.spec.ts` | Firma XMLDSig SHA-256 |
+| `cdr-processor.service.spec.ts` | Parseo CDR SUNAT |
+| `pdf-generator.service.spec.ts` | Generacion PDF A4/ticket |
+| `invoice-send.spec.ts` | Processor de cola invoice-send |
+
+**E2E (test/):**
+
+| Suite | Descripcion |
+|-------|-------------|
+| `auth.e2e-spec.ts` | Flujo completo auth |
+| `invoices.e2e-spec.ts` | Emision de comprobantes |
+| `consultations.e2e-spec.ts` | Consultas RUC/DNI |
+| `health.e2e-spec.ts` | Health checks |
 
 ### Configuracion
 
 - **Framework**: Vitest 3
 - **Cobertura**: V8 provider con reportes text + lcov
 - **Globals**: Habilitados (sin import explicito de `describe`, `it`, `expect`)
+- **E2E**: Usa `unplugin-swc` para decoradores, timeout 30s
 
 ---
 
@@ -526,7 +646,7 @@ docker compose up -d postgres redis
 ### Produccion
 
 ```bash
-# Build y ejecucion completa
+# Build y ejecucion completa (3 servicios: postgres, redis, app)
 docker compose up -d
 
 # Solo build de imagen
@@ -543,6 +663,7 @@ La imagen Docker utiliza un build multi-stage optimizado:
    - Base: `node:22-alpine`
    - Usuario no-root (`node`)
    - Signal handling con `dumb-init`
+   - Graceful shutdown con timeout 30s para drain de colas BullMQ
    - Puerto expuesto: `3000`
 
 ---
@@ -552,17 +673,17 @@ La imagen Docker utiliza un build multi-stage optimizado:
 El pipeline de GitHub Actions (`.github/workflows/ci.yml`) ejecuta 4 jobs:
 
 ```
- lint-and-typecheck  ──>  test  ──>  build  ──>  docker (solo main)
+ lint-and-typecheck  ──>  test  ──>  build  ──>  docker (solo main/master)
 ```
 
 | Job                 | Descripcion                                |
 |---------------------|--------------------------------------------|
-| `lint-and-typecheck`| ESLint + TypeScript compiler check         |
-| `test`              | Vitest con PostgreSQL 16 y Redis 7         |
+| `lint-and-typecheck`| ESLint + TypeScript compiler check (`tsc --noEmit`) |
+| `test`              | Vitest con PostgreSQL 16 y Redis 7 (services) |
 | `build`             | Compilacion NestJS + artifact upload       |
 | `docker`            | Build y push a GitHub Container Registry   |
 
-**Triggers**: Push a `main`/`develop`, PR a `main`.
+**Triggers**: Push a `main`/`master`/`develop`, PR a `main`/`master`.
 
 ---
 
@@ -581,25 +702,28 @@ El pipeline de GitHub Actions (`.github/workflows/ci.yml`) ejecuta 4 jobs:
 
 ```
 src/
-├── main.ts                           # Bootstrap Fastify + Swagger
-├── app.module.ts                     # Root module (guards, filters, interceptors)
+├── main.ts                           # Bootstrap Fastify + Sentry + graceful shutdown
+├── app.module.ts                     # Root module (guards, filters, interceptors, middleware)
+├── generated/prisma/                 # Prisma Client generado (output local)
 ├── common/
-│   ├── constants/index.ts            # Catalogos SUNAT 01-52, namespaces UBL,
-│   │                                 # endpoints SOAP/GRE, tasas, credenciales beta
-│   ├── decorators/                   # @CurrentUser, @Tenant, @Public, @SkipTenant, @ApiKeyAuth
+│   ├── constants/index.ts            # Catalogos SUNAT 01-62, namespaces UBL,
+│   │                                 # endpoints SOAP/GRE, tasas, detracciones, IVAP
+│   ├── decorators/                   # @CurrentUser, @Tenant, @Public, @SkipTenant, @Roles, @ApiKeyAuth
 │   ├── guards/                       # JWT, API Key, Tenant, Roles, TenantThrottler
 │   ├── interceptors/                 # Logging, Timeout
 │   ├── filters/                      # HTTP, Prisma, Sentry exception filters
 │   ├── pipes/                        # ParseRucPipe, ParseDocTypePipe
-│   ├── middleware/                    # TenantMiddleware (CLS)
-│   └── utils/                        # tax-calculator, amount-to-words, encryption, zip, ruc-validator
-├── config/                           # app, database, redis, sunat, jwt, mercadopago
+│   ├── middleware/                    # TenantMiddleware (CLS), CorrelationIdMiddleware (X-Request-ID)
+│   └── utils/                        # tax-calculator, amount-to-words, encryption,
+│                                     # peru-date, zip, ruc-validator
+├── config/                           # app, database, redis, sunat, jwt, mercadopago,
+│                                     # resend, sentry
 ├── modules/
-│   ├── auth/                         # JWT + API Keys + register/login/refresh
-│   ├── users/                        # Gestion de usuarios
-│   ├── companies/                    # Empresas (tenants) + CRUD + SOL credentials
+│   ├── auth/                         # JWT + API Keys + register/login/refresh/logout/password
+│   ├── users/                        # Perfil usuario (GET/PUT /me, GET /me/companies)
+│   ├── companies/                    # Empresas (tenants) + SOL + migracion beta/prod
 │   ├── certificates/                 # Upload PFX, cifrado AES-256-GCM
-│   ├── xml-builder/                  # 9 builders XML UBL 2.1 + validador + interfaces
+│   ├── xml-builder/                  # 8 builders XML UBL 2.1 + validador + interfaces
 │   │   ├── builders/                 # base, invoice, credit-note, debit-note, summary,
 │   │   │                             # voided, retention, perception, guide
 │   │   ├── validators/               # 8 metodos validate* (pre-envio SUNAT)
@@ -607,21 +731,28 @@ src/
 │   │                                 # XmlGuideData, XmlSummaryData, XmlVoidedData, etc.
 │   ├── xml-signer/                   # Firma digital XMLDSig SHA-256 + pfx-reader
 │   ├── sunat-client/                 # SOAP (sendBill, sendSummary, getStatus)
-│   │                                 # + GRE REST API (OAuth2 + envio)
+│   │   │                             # + GRE REST API (OAuth2 + envio)
+│   │   └── wsdl/                     # WSDLs locales: main.wsdl, retention.wsdl, types.*
 │   ├── cdr-processor/                # Parseo CDR (ApplicationResponse)
-│   ├── invoices/                     # 9 tipos CPE: controller + service + 10 DTOs
+│   ├── invoices/                     # 9 tipos CPE + batch: controller + service + 11 DTOs
 │   ├── pdf-generator/                # PDF A4 + ticket 80mm (pdfmake + QR)
-│   ├── queues/                       # 5 colas BullMQ: invoice-send, pdf-generate,
-│   │                                 # email-send, summary-send, ticket-poll
+│   ├── queues/                       # 7 colas BullMQ + DLQ listener
+│   │   └── processors/               # invoice-send, summary-send, ticket-poll,
+│   │                                 # pdf-generate, email-send, webhook-send, dlq.listener
 │   ├── webhooks/                     # CRUD + dispatch HMAC-signed
 │   ├── consultations/                # RUC, DNI, tipo de cambio, validar CPE
-│   ├── billing/                      # Mercado Pago suscripciones + quota enforcement
+│   ├── billing/                      # Planes + suscripciones + Mercado Pago (/billing/*)
 │   ├── notifications/                # Emails transaccionales (Resend)
-│   ├── health/                       # Health checks (Terminus)
-│   └── prisma/                       # PrismaService (global)
-├── generated/prisma/                 # Prisma Client generado
-└── database/
-    └── rls-policies.sql              # Politicas Row-Level Security
+│   ├── dashboard/                    # Resumen emision + reporte mensual PDT 621
+│   ├── health/                       # Health checks (Terminus: DB, Redis, memory, disk)
+│   ├── prisma/                       # PrismaService global con tenant extension
+│   └── redis/                        # RedisModule global (ioredis, token REDIS_CLIENT)
+├── database/
+│   └── rls-policies.sql              # Politicas Row-Level Security
+└── prisma/
+    ├── schema.prisma                 # Schema con IVAP, detracciones, anticipos, exportacion
+    ├── seed.ts                       # Seed planes de suscripcion
+    └── migrations/                   # 2 migraciones (init + webhooks)
 ```
 
 ---
