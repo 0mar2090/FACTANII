@@ -233,7 +233,7 @@ export class InvoicesService {
         cuentaDetraccion: detraccion?.cuentaBN ?? null,
         anticiposData: dto.anticipos ? JSON.parse(JSON.stringify(dto.anticipos)) : null,
         docsRelacionadosData: dto.documentosRelacionados ? JSON.parse(JSON.stringify(dto.documentosRelacionados)) : null,
-        opExportacion: 0,
+        opExportacion: totals.opExportacion ?? 0,
         status: 'DRAFT',
         items: {
           create: calculatedItems.map((item) => ({
@@ -277,6 +277,7 @@ export class InvoicesService {
       opExoneradas: totals.opExoneradas,
       opInafectas: totals.opInafectas,
       opGratuitas: totals.opGratuitas,
+      opExportacion: totals.opExportacion ?? 0,
       opIvap: totals.opIvap,
       igv: totals.igv,
       igvIvap: totals.igvIvap,
@@ -1911,7 +1912,9 @@ export class InvoicesService {
       codigo: item.dto.codigo,
       codigoSunat: item.dto.codigoSunat,
       valorUnitario: item.calc.valorUnitario,
-      precioUnitario: item.calc.precioUnitario,
+      // XML PricingReference uses valorReferencial for gratuitas (what it would cost if not free)
+      // For onerosa operations, valorReferencial equals precioUnitario
+      precioUnitario: item.calc.valorReferencial,
       valorVenta: item.calc.valorVenta,
       tipoAfectacion: item.tipoAfectacion,
       igv: item.calc.igv,

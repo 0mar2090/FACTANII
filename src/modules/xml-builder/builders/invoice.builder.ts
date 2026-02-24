@@ -158,7 +158,7 @@ export class InvoiceBuilder extends BaseXmlBuilder {
 
     // 13. Global discount (if applicable)
     if (data.descuentoGlobal > 0) {
-      const discountBase = data.opGravadas + data.opExoneradas + data.opInafectas;
+      const discountBase = data.opGravadas + data.opExoneradas + data.opInafectas + (data.opExportacion ?? 0);
       const discountFactor = discountBase > 0 ? data.descuentoGlobal / discountBase : 0;
 
       const allowance = doc.ele('cac:AllowanceCharge');
@@ -191,6 +191,7 @@ export class InvoiceBuilder extends BaseXmlBuilder {
       data.moneda,
       data.opIvap ?? 0,
       data.igvIvap ?? 0,
+      data.opExportacion ?? 0,
     );
 
     // 15. Legal monetary totals
@@ -207,6 +208,7 @@ export class InvoiceBuilder extends BaseXmlBuilder {
       data.totalVenta,
       data.moneda,
       data.opIvap ?? 0,
+      data.opExportacion ?? 0,
     );
 
     // 16. Line count

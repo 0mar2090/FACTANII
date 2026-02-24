@@ -270,6 +270,7 @@ export abstract class BaseXmlBuilder {
     moneda: string,
     opIvap = 0,
     igvIvap = 0,
+    opExportacion = 0,
   ): void {
     const totalTaxAmount = igv + igvIvap + isc + icbper;
     const taxTotal = parent.ele('cac:TaxTotal');
@@ -349,6 +350,18 @@ export abstract class BaseXmlBuilder {
         moneda,
         'O',
         CODIGO_TRIBUTO.INAFECTO,
+      );
+    }
+
+    // Exportación subtotal (TaxScheme 9995)
+    if (opExportacion > 0) {
+      this.addTaxSubtotal(
+        taxTotal,
+        opExportacion,
+        0,
+        moneda,
+        'G',
+        CODIGO_TRIBUTO.EXPORTACION,
       );
     }
 
@@ -809,8 +822,9 @@ export abstract class BaseXmlBuilder {
     totalVenta: number,
     moneda: string,
     opIvap = 0,
+    opExportacion = 0,
   ): void {
-    const lineExtension = opGravadas + opIvap + opExoneradas + opInafectas;
+    const lineExtension = opGravadas + opIvap + opExoneradas + opInafectas + opExportacion;
     const taxInclusive = totalVenta;
 
     const monetaryTotal = parent.ele('cac:LegalMonetaryTotal');

@@ -22,7 +22,7 @@ describe('IVAP (Impuesto Venta Arroz Pilado)', () => {
 
   it('aggregates IVAP separately in invoice totals', () => {
     const items = [{
-      valorUnitario: 10, precioUnitario: 10.4, valorVenta: 1000,
+      valorUnitario: 10, precioUnitario: 10.4, valorReferencial: 10.4, valorVenta: 1000,
       igv: 40, isc: 0, icbper: 0, descuento: 0, totalItem: 1040,
     }];
     const totals = calculateInvoiceTotals({

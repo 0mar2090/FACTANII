@@ -114,6 +114,8 @@ export interface XmlInvoiceData {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  /** Export operations (tipoAfectacion '40') — separate TaxScheme 9995 */
+  opExportacion?: number;
   /** IVAP base amount (tipo 17) — separate TaxSubtotal with code 1016 */
   opIvap?: number;
   igv: number;

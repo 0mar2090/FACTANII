@@ -107,7 +107,10 @@ export interface ItemCalcInput {
 
 export interface ItemCalcResult {
   valorUnitario: number;    // 4 decimales
-  precioUnitario: number;   // 4 decimales (con IGV si gravado)
+  precioUnitario: number;   // 4 decimales (con IGV si gravado, 0 para gratuitas)
+  /** Valor referencial unitario para operaciones gratuitas (precio que tendría si no fuera gratis).
+   *  Para operaciones onerosas, es igual a precioUnitario. */
+  valorReferencial: number; // 4 decimales
   valorVenta: number;       // 2 decimales
   igv: number;              // 2 decimales
   isc: number;              // 2 decimales
@@ -159,12 +162,21 @@ export function calculateItemTaxes(input: ItemCalcInput): ItemCalcResult {
     precioUnitario = round4(valorUnitario * (1 + rate));
   }
 
+  // Valor referencial: what it would cost if not free (used in XML PricingReference for gratuitas)
+  const valorReferencial = precioUnitario;
+
+  // Gratuitous operations: precioUnitario = 0 (free to buyer)
+  if (isGratuita(tipoAfectacion)) {
+    precioUnitario = 0;
+  }
+
   const icbper = round2(cantidadBolsasPlastico * ICBPER_RATE);
   const totalItem = round2(valorVenta + igv + isc + icbper);
 
   return {
     valorUnitario: round4(valorUnitario),
     precioUnitario,
+    valorReferencial,
     valorVenta,
     igv,
     isc: round2(isc),
@@ -186,6 +198,8 @@ export interface InvoiceTotals {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  /** Export operations (tipoAfectacion '40') — tracked separately from opInafectas for TaxScheme 9995 */
+  opExportacion: number;
   /** IVAP base amount (tipo 17) — tracked separately from opGravadas for XML TaxSubtotal */
   opIvap: number;
   igv: number;
@@ -209,6 +223,7 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
   let opExoneradas = 0;
   let opInafectas = 0;
   let opGratuitas = 0;
+  let opExportacion = 0;
   let opIvap = 0;
   let totalIgv = 0;
   let totalIgvIvap = 0;
@@ -232,7 +247,9 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
       totalIgv += item.igv;
     } else if (isExonerado(tipo)) {
       opExoneradas += item.valorVenta;
-    } else if (isInafecto(tipo) || isExportacion(tipo)) {
+    } else if (isExportacion(tipo)) {
+      opExportacion += item.valorVenta;
+    } else if (isInafecto(tipo)) {
       opInafectas += item.valorVenta;
     }
 
@@ -244,6 +261,7 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
   opExoneradas = round2(opExoneradas);
   opInafectas = round2(opInafectas);
   opGratuitas = round2(opGratuitas);
+  opExportacion = round2(opExportacion);
   opIvap = round2(opIvap);
   totalIgv = round2(totalIgv);
   totalIgvIvap = round2(totalIgvIvap);
@@ -258,7 +276,7 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
   // IGV to diverge from the sum of line IGVs, triggering error 2510.
 
   const totalVenta = round2(
-    opGravadas + opIvap + opExoneradas + opInafectas +
+    opGravadas + opIvap + opExoneradas + opInafectas + opExportacion +
     totalIgv + totalIgvIvap + totalIsc + totalIcbper +
     otrosCargos - descuentoGlobal,
   );
@@ -268,6 +286,7 @@ export function calculateInvoiceTotals(input: InvoiceTotalsInput): InvoiceTotals
     opExoneradas,
     opInafectas,
     opGratuitas,
+    opExportacion,
     opIvap,
     igv: totalIgv,
     igvIvap: totalIgvIvap,

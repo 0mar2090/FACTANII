@@ -187,6 +187,19 @@ export class XmlValidatorService {
       }
     }
 
+    // Export invoices: all items must have tipoAfectacion '40'
+    const exportOps = ['0200', '0201', '0202', '0203', '0204', '0205', '0206', '0207', '0208'];
+    if (exportOps.includes(tipoOp)) {
+      for (const [idx, item] of (dto.items || []).entries()) {
+        if ((item.tipoAfectacion ?? '10') !== '40') {
+          errors.push({
+            field: `items[${idx}].tipoAfectacion`,
+            message: `Factura de exportación requiere tipoAfectacion '40', item ${idx} tiene '${item.tipoAfectacion ?? '10'}'`,
+          });
+        }
+      }
+    }
+
     // --- Deep validations (SUNAT Feb 2026) ---
 
     // Compute totals from items for cross-checks
