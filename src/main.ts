@@ -68,16 +68,25 @@ async function bootstrap() {
 
   // Fastify plugins
   await app.register(multipart, { limits: { fileSize: 5_242_880 } }); // 5MB max for PFX
-  await app.register(helmet, {
-    contentSecurityPolicy: {
-      directives: {
+  // In production, use strict CSP. In dev, relax for Swagger UI.
+  const cspDirectives = isProduction
+    ? {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:'],
+        fontSrc: ["'self'"],
+      }
+    : {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "'unsafe-inline'"], // Required for Swagger UI
         styleSrc: ["'self'", "'unsafe-inline'"],  // Required for Swagger UI
         imgSrc: ["'self'", 'data:', 'https://validator.swagger.io'],
         fontSrc: ["'self'"],
-      },
-    },
+      };
+
+  await app.register(helmet, {
+    contentSecurityPolicy: { directives: cspDirectives },
   });
 
   // Prefijo global

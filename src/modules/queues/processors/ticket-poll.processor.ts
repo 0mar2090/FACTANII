@@ -8,6 +8,9 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import { QUEUE_TICKET_POLL } from '../queues.constants.js';
 import type { TicketPollJobData } from '../interfaces/index.js';
 
+/** Maximum polling window: 24 hours. After this, the job is abandoned. */
+const MAX_POLL_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /**
  * BullMQ processor for polling SUNAT async operations:
  *
@@ -15,6 +18,7 @@ import type { TicketPollJobData } from '../interfaces/index.js';
  * 2. **GRE REST API:** Uses getGuideStatus(ticket) for Guías de Remisión.
  *
  * Configured with 20 attempts, fixed 30s polling interval (~10 min window).
+ * Enforces a maximum polling window of 24 hours regardless of attempts remaining.
  */
 @Processor(QUEUE_TICKET_POLL, {
   concurrency: 3,
@@ -32,7 +36,32 @@ export class TicketPollProcessor extends WorkerHost {
   }
 
   async process(job: Job<TicketPollJobData>): Promise<void> {
-    const { documentType } = job.data;
+    const { documentType, invoiceId, ticket } = job.data;
+
+    // Validate required fields
+    if (!ticket || !invoiceId) {
+      this.logger.error(
+        `Ticket poll job ${job.id} missing required fields: ticket=${ticket}, invoiceId=${invoiceId}`,
+      );
+      return; // Don't retry — data is invalid
+    }
+
+    // Enforce maximum polling window
+    const elapsed = Date.now() - job.timestamp;
+    if (elapsed > MAX_POLL_WINDOW_MS) {
+      this.logger.error(
+        `Ticket poll for invoice ${invoiceId} exceeded max window (${Math.round(elapsed / 60_000)}min). Marking as REJECTED.`,
+      );
+      await this.prisma.client.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          status: 'REJECTED',
+          sunatCode: 'TIMEOUT',
+          sunatMessage: 'SUNAT did not respond within the maximum polling window (24h)',
+        },
+      });
+      return; // Don't retry
+    }
 
     if (documentType === 'guide') {
       return this.pollGreStatus(job);

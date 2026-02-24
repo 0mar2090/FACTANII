@@ -937,16 +937,20 @@ export class InvoicesService {
 
     // Enqueue ticket polling if we got a ticket
     if (ticket) {
-      void this.ticketPollQueue.add('poll', {
-        ticket,
-        invoiceId: invoice.id,
-        companyId,
-        ruc,
-        solUser,
-        solPass,
-        isBeta: company.isBeta,
-        documentType: 'summary',
-      } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
+      try {
+        await this.ticketPollQueue.add('poll', {
+          ticket,
+          invoiceId: invoice.id,
+          companyId,
+          ruc,
+          solUser,
+          solPass,
+          isBeta: company.isBeta,
+          documentType: 'summary',
+        } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
+      } catch (err: any) {
+        this.logger.error(`Failed to queue ticket-poll for ${summaryId}: ${err.message}. Ticket=${ticket} is saved in sunatMessage.`);
+      }
     }
 
     return {
@@ -1068,16 +1072,20 @@ export class InvoicesService {
 
     // Enqueue ticket polling if we got a ticket
     if (ticket) {
-      void this.ticketPollQueue.add('poll', {
-        ticket,
-        invoiceId: invoice.id,
-        companyId,
-        ruc,
-        solUser,
-        solPass,
-        isBeta: company.isBeta,
-        documentType: 'voided',
-      } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
+      try {
+        await this.ticketPollQueue.add('poll', {
+          ticket,
+          invoiceId: invoice.id,
+          companyId,
+          ruc,
+          solUser,
+          solPass,
+          isBeta: company.isBeta,
+          documentType: 'voided',
+        } satisfies import('../queues/interfaces/index.js').TicketPollJobData);
+      } catch (err: any) {
+        this.logger.error(`Failed to queue ticket-poll for ${voidedId}: ${err.message}. Ticket=${ticket} is saved in sunatMessage.`);
+      }
     }
 
     return {
