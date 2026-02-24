@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Inject,
   ConflictException,
   UnauthorizedException,
   NotFoundException,
@@ -10,12 +11,19 @@ import { ConfigService } from '@nestjs/config';
 import { scrypt, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import type { Redis } from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
-import { RegisterDto, LoginDto, CreateApiKeyDto } from './dto/index.js';
+import { REDIS_CLIENT } from '../redis/redis.module.js';
+import { RegisterDto, LoginDto, CreateApiKeyDto, ChangePasswordDto } from './dto/index.js';
 import type { JwtPayload } from '../../common/interfaces/index.js';
 
 const scryptAsync = promisify(scrypt);
+
+/** Max failed login attempts before lockout */
+const MAX_LOGIN_ATTEMPTS = 5;
+/** Lockout window in seconds (15 minutes) */
+const LOCKOUT_WINDOW_SECONDS = 900;
 
 export interface AuthTokens {
   accessToken: string;
@@ -45,6 +53,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   /**
@@ -102,8 +111,13 @@ export class AuthService {
    * exactly one company, the companyId and role are included in the tokens.
    */
   async login(dto: LoginDto): Promise<AuthResponse> {
+    const email = dto.email.toLowerCase().trim();
+
+    // Check account lockout
+    await this.checkLockout(email);
+
     const user = await this.prisma.client.user.findUnique({
-      where: { email: dto.email.toLowerCase().trim() },
+      where: { email },
       include: {
         companyUsers: {
           include: {
@@ -114,17 +128,25 @@ export class AuthService {
     });
 
     if (!user) {
+      this.logger.warn(`Login failed: unknown email ${email}`);
+      await this.recordFailedAttempt(email);
       throw new UnauthorizedException('Invalid email or password');
     }
 
     if (!user.isActive) {
+      this.logger.warn(`Login failed: deactivated account ${email} (${user.id})`);
       throw new UnauthorizedException('Account is deactivated');
     }
 
     const isValid = await this.verifyPassword(dto.password, user.passwordHash);
     if (!isValid) {
+      this.logger.warn(`Login failed: bad password for ${email} (${user.id})`);
+      await this.recordFailedAttempt(email);
       throw new UnauthorizedException('Invalid email or password');
     }
+
+    // Successful login — clear failed attempts
+    await this.clearFailedAttempts(email);
 
     // If user belongs to exactly one active company, include it in the token
     const activeCompanies = user.companyUsers.filter(
@@ -313,6 +335,93 @@ export class AuthService {
     this.logger.log(`API key deleted: ${apiKey.prefix}... (${id})`);
   }
 
+  /**
+   * Change the current user's password.
+   * Requires the current password for verification.
+   */
+  async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
+    const user = await this.prisma.client.user.findUnique({
+      where: { id: userId },
+      select: { id: true, passwordHash: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const isValid = await this.verifyPassword(dto.currentPassword, user.passwordHash);
+    if (!isValid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    const newHash = await this.hashPassword(dto.newPassword);
+    await this.prisma.client.user.update({
+      where: { id: userId },
+      data: { passwordHash: newHash },
+    });
+
+    this.logger.log(`Password changed for user ${userId}`);
+  }
+
+  /**
+   * Revoke a JWT token by adding its jti to the Redis blacklist.
+   * TTL matches the token's remaining lifetime so keys auto-expire.
+   */
+  async logout(accessToken: string): Promise<void> {
+    try {
+      const payload = this.jwtService.decode(accessToken) as JwtPayload | null;
+      if (payload?.jti && payload?.exp) {
+        const ttl = payload.exp - Math.floor(Date.now() / 1000);
+        if (ttl > 0) {
+          await this.redis.set(`jwt_blacklist:${payload.jti}`, '1', 'EX', ttl);
+        }
+      }
+    } catch {
+      // Token is malformed or already expired — nothing to blacklist
+    }
+  }
+
+  /**
+   * Check if a JWT token has been revoked.
+   */
+  async isTokenRevoked(jti: string): Promise<boolean> {
+    const result = await this.redis.get(`jwt_blacklist:${jti}`);
+    return result !== null;
+  }
+
+  // ─── Login Lockout ──────────────────────────────────────────────────
+
+  private loginAttemptsKey(email: string): string {
+    return `login_attempts:${email}`;
+  }
+
+  private async checkLockout(email: string): Promise<void> {
+    const attempts = await this.redis.get(this.loginAttemptsKey(email));
+    if (attempts && parseInt(attempts, 10) >= MAX_LOGIN_ATTEMPTS) {
+      const ttl = await this.redis.ttl(this.loginAttemptsKey(email));
+      const minutes = Math.ceil(ttl / 60);
+      this.logger.warn(`Account locked: ${email} (${attempts} failed attempts)`);
+      throw new UnauthorizedException(
+        `Account temporarily locked due to too many failed attempts. Try again in ${minutes} minute(s).`,
+      );
+    }
+  }
+
+  private async recordFailedAttempt(email: string): Promise<void> {
+    const key = this.loginAttemptsKey(email);
+    const current = await this.redis.incr(key);
+    if (current === 1) {
+      await this.redis.expire(key, LOCKOUT_WINDOW_SECONDS);
+    }
+    if (current >= MAX_LOGIN_ATTEMPTS) {
+      this.logger.warn(`Account locked after ${current} failed attempts: ${email}`);
+    }
+  }
+
+  private async clearFailedAttempts(email: string): Promise<void> {
+    await this.redis.del(this.loginAttemptsKey(email));
+  }
+
   // ─── Private Methods ─────────────────────────────────────────────────
 
   /**
@@ -322,22 +431,36 @@ export class AuthService {
    * Refresh token: longer-lived (default 7d), used to obtain new access tokens.
    */
   private async generateTokens(payload: JwtPayload): Promise<AuthTokens> {
-    const tokenPayload = {
-      sub: payload.sub,
-      email: payload.email,
-      companyId: payload.companyId,
-      role: payload.role,
-    };
+    const accessJti = randomBytes(16).toString('hex');
+    const refreshJti = randomBytes(16).toString('hex');
 
     const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(tokenPayload, {
-        secret: this.config.get<string>('jwt.secret'),
-        expiresIn: this.config.get('jwt.expiration', '15m') as any,
-      }),
-      this.jwtService.signAsync(tokenPayload, {
-        secret: this.config.get<string>('jwt.refreshSecret'),
-        expiresIn: this.config.get('jwt.refreshExpiration', '7d') as any,
-      }),
+      this.jwtService.signAsync(
+        {
+          sub: payload.sub,
+          email: payload.email,
+          companyId: payload.companyId,
+          role: payload.role,
+          jti: accessJti,
+        },
+        {
+          secret: this.config.get<string>('jwt.secret'),
+          expiresIn: this.config.get('jwt.expiration', '15m') as any,
+        },
+      ),
+      this.jwtService.signAsync(
+        {
+          sub: payload.sub,
+          email: payload.email,
+          companyId: payload.companyId,
+          role: payload.role,
+          jti: refreshJti,
+        },
+        {
+          secret: this.config.get<string>('jwt.refreshSecret'),
+          expiresIn: this.config.get('jwt.refreshExpiration', '7d') as any,
+        },
+      ),
     ]);
 
     return { accessToken, refreshToken };

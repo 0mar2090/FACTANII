@@ -129,10 +129,7 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
       data.igvIvap ?? 0,
     );
 
-    // 13. Line count
-    doc.ele('cbc:LineCountNumeric').txt(data.items.length.toString()).up();
-
-    // 14. Debit note lines (must come BEFORE RequestedMonetaryTotal per UBL 2.1)
+    // 13. Debit note lines
     for (let i = 0; i < data.items.length; i++) {
       this.addDocumentLine(
         doc,
@@ -144,7 +141,10 @@ export class DebitNoteBuilder extends BaseXmlBuilder {
       );
     }
 
-    // 14. Legal monetary totals
+    // 14. Line count (MUST come AFTER DebitNoteLine per UBL 2.1 DebitNote XSD)
+    doc.ele('cbc:LineCountNumeric').txt(data.items.length.toString()).up();
+
+    // 15. Legal monetary totals
     // Note: RequestedMonetaryTotal is used for DebitNote (same structure as LegalMonetaryTotal)
     this.addRequestedMonetaryTotal(
       doc,

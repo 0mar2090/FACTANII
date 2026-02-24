@@ -12,6 +12,16 @@ import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module.js';
 
 async function bootstrap() {
+  // Validate ENCRYPTION_KEY before anything else — fail fast
+  const encryptionKey = process.env.ENCRYPTION_KEY;
+  if (!encryptionKey || encryptionKey.length !== 64) {
+    console.error(
+      'FATAL: ENCRYPTION_KEY must be 32 bytes (64 hex chars). ' +
+        "Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    );
+    process.exit(1);
+  }
+
   // Sentry error tracking initialization
   if (process.env.SENTRY_DSN) {
     Sentry.init({
@@ -58,7 +68,17 @@ async function bootstrap() {
 
   // Fastify plugins
   await app.register(multipart, { limits: { fileSize: 5_242_880 } }); // 5MB max for PFX
-  await app.register(helmet, { contentSecurityPolicy: false }); // CSP disabled for Swagger UI
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"], // Required for Swagger UI
+        styleSrc: ["'self'", "'unsafe-inline'"],  // Required for Swagger UI
+        imgSrc: ["'self'", 'data:', 'https://validator.swagger.io'],
+        fontSrc: ["'self'"],
+      },
+    },
+  });
 
   // Prefijo global
   const apiPrefix = configService.get<string>('app.apiPrefix', 'api/v1');

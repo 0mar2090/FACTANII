@@ -1,15 +1,18 @@
 import {
   Controller,
   Post,
+  Patch,
   Delete,
   Body,
   Param,
+  Req,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import type { FastifyRequest } from 'fastify';
 import { AuthService } from './auth.service.js';
-import { RegisterDto, LoginDto, RefreshTokenDto, CreateApiKeyDto } from './dto/index.js';
+import { RegisterDto, LoginDto, RefreshTokenDto, CreateApiKeyDto, ChangePasswordDto } from './dto/index.js';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
@@ -58,6 +61,39 @@ export class AuthController {
     return {
       success: true,
       data,
+    };
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Logout and revoke the current access token' })
+  @ApiResponse({ status: 200, description: 'Token revoked successfully' })
+  async logout(@Req() req: FastifyRequest) {
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      await this.authService.logout(authHeader.slice(7));
+    }
+    return {
+      success: true,
+      data: { message: 'Logged out successfully' },
+    };
+  }
+
+  @Patch('password')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change current user password' })
+  @ApiResponse({ status: 200, description: 'Password changed successfully' })
+  @ApiResponse({ status: 401, description: 'Current password is incorrect' })
+  async changePassword(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    await this.authService.changePassword(user.userId, dto);
+    return {
+      success: true,
+      data: { message: 'Password changed successfully' },
     };
   }
 

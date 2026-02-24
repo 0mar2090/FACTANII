@@ -292,8 +292,13 @@ function setupHappyPath(mocks: ReturnType<typeof createMocks>) {
     notes: [],
   });
 
-  // prisma.client.invoice.create → saved invoice
-  mocks.prisma.client.invoice.create.mockResolvedValue(makeSavedInvoice());
+  // prisma.client.invoice.create → DRAFT invoice (DRAFT-first pattern)
+  mocks.prisma.client.invoice.create.mockResolvedValue(
+    makeSavedInvoice({ status: 'DRAFT', xmlContent: null, xmlHash: null, xmlSigned: false, sunatCode: null, sunatMessage: null }),
+  );
+
+  // prisma.client.invoice.update → final invoice with SUNAT response
+  mocks.prisma.client.invoice.update.mockResolvedValue(makeSavedInvoice());
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -399,17 +404,23 @@ describe('InvoicesService', () => {
       const dto = makeInvoiceDto();
       await service.createInvoice('comp1', dto);
 
+      // DRAFT-first: create is called with DRAFT status and items
       expect(mocks.prisma.client.invoice.create).toHaveBeenCalledOnce();
       const createArg = mocks.prisma.client.invoice.create.mock.calls[0][0];
       expect(createArg.data.companyId).toBe('comp1');
       expect(createArg.data.tipoDoc).toBe('01');
       expect(createArg.data.serie).toBe('F001');
       expect(createArg.data.correlativo).toBe(1);
-      expect(createArg.data.xmlSigned).toBe(true);
-      expect(createArg.data.status).toBe('ACCEPTED');
-      expect(createArg.data.xmlContent).toBe('<signedXml/>');
-      expect(createArg.data.xmlHash).toBe('abc123');
+      expect(createArg.data.status).toBe('DRAFT');
       expect(createArg.data.items.create).toHaveLength(1);
+
+      // Then update is called with XML content and SUNAT response
+      expect(mocks.prisma.client.invoice.update).toHaveBeenCalled();
+      const updateArg = mocks.prisma.client.invoice.update.mock.calls[0][0];
+      expect(updateArg.data.xmlSigned).toBe(true);
+      expect(updateArg.data.xmlContent).toBe('<signedXml/>');
+      expect(updateArg.data.xmlHash).toBe('abc123');
+      expect(updateArg.data.status).toBe('ACCEPTED');
     });
 
     it('should fire billing.incrementInvoiceCount after saving', async () => {

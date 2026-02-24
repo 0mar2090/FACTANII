@@ -21,11 +21,15 @@ export interface EncryptedData {
   authTag: string;    // hex
 }
 
-/** Cifra un string con AES-256-GCM */
-export function encrypt(plaintext: string): EncryptedData {
+/** Cifra un string con AES-256-GCM. Optional AAD binds ciphertext to a context. */
+export function encrypt(plaintext: string, aad?: string): EncryptedData {
   const key = getKey();
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH });
+
+  if (aad) {
+    cipher.setAAD(Buffer.from(aad, 'utf8'));
+  }
 
   let encrypted = cipher.update(plaintext, 'utf8', 'base64');
   encrypted += cipher.final('base64');
@@ -37,8 +41,8 @@ export function encrypt(plaintext: string): EncryptedData {
   };
 }
 
-/** Descifra datos cifrados con AES-256-GCM */
-export function decrypt(data: EncryptedData): string {
+/** Descifra datos cifrados con AES-256-GCM. AAD must match the value used during encryption. */
+export function decrypt(data: EncryptedData, aad?: string): string {
   const key = getKey();
   const iv = Buffer.from(data.iv, 'hex');
   const authTag = Buffer.from(data.authTag, 'hex');
@@ -46,14 +50,18 @@ export function decrypt(data: EncryptedData): string {
   const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH });
   decipher.setAuthTag(authTag);
 
+  if (aad) {
+    decipher.setAAD(Buffer.from(aad, 'utf8'));
+  }
+
   let decrypted = decipher.update(data.ciphertext, 'base64', 'utf8');
   decrypted += decipher.final('utf8');
 
   return decrypted;
 }
 
-/** Cifra bytes (para archivos PFX) */
-export function encryptBuffer(buffer: Buffer): {
+/** Cifra bytes (para archivos PFX). Optional AAD binds ciphertext to a context. */
+export function encryptBuffer(buffer: Buffer, aad?: string): {
   ciphertext: Buffer;
   iv: string;
   authTag: string;
@@ -61,6 +69,10 @@ export function encryptBuffer(buffer: Buffer): {
   const key = getKey();
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH });
+
+  if (aad) {
+    cipher.setAAD(Buffer.from(aad, 'utf8'));
+  }
 
   const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
 
@@ -71,17 +83,22 @@ export function encryptBuffer(buffer: Buffer): {
   };
 }
 
-/** Descifra bytes */
+/** Descifra bytes. AAD must match the value used during encryption. */
 export function decryptBuffer(
   ciphertext: Buffer,
   iv: string,
   authTag: string,
+  aad?: string,
 ): Buffer {
   const key = getKey();
   const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(iv, 'hex'), {
     authTagLength: AUTH_TAG_LENGTH,
   });
   decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+
+  if (aad) {
+    decipher.setAAD(Buffer.from(aad, 'utf8'));
+  }
 
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }

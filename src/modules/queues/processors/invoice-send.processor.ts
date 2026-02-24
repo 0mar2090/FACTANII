@@ -6,11 +6,8 @@ import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import type { Job, Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service.js';
-import { XmlBuilderService } from '../../xml-builder/xml-builder.service.js';
-import { XmlSignerService } from '../../xml-signer/xml-signer.service.js';
 import { SunatClientService } from '../../sunat-client/sunat-client.service.js';
 import { CdrProcessorService } from '../../cdr-processor/cdr-processor.service.js';
-import { CertificatesService } from '../../certificates/certificates.service.js';
 import { CompaniesService } from '../../companies/companies.service.js';
 import { WebhooksService } from '../../webhooks/webhooks.service.js';
 import { createZipFromXml } from '../../../common/utils/zip.js';
@@ -47,11 +44,8 @@ export class InvoiceSendProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly xmlBuilder: XmlBuilderService,
-    private readonly xmlSigner: XmlSignerService,
     private readonly sunatClient: SunatClientService,
     private readonly cdrProcessor: CdrProcessorService,
-    private readonly certificates: CertificatesService,
     private readonly companies: CompaniesService,
     private readonly webhooks: WebhooksService,
     @InjectQueue(QUEUE_PDF_GENERATE) private readonly pdfQueue: Queue,
@@ -103,39 +97,24 @@ export class InvoiceSendProcessor extends WorkerHost {
       throw new Error(`Company ${companyId} not found`);
     }
 
-    // 4. Ensure we have signed XML; if not, build and sign
-    let signedXml = invoice.xmlContent;
-    let xmlHash = invoice.xmlHash;
-
-    if (!signedXml || !invoice.xmlSigned) {
-      this.logger.log(
-        `Invoice ${invoiceId} has no signed XML — building and signing`,
+    // 4. Verify we have signed XML ready to send
+    if (!invoice.xmlContent || !invoice.xmlSigned) {
+      this.logger.error(
+        `Invoice ${invoiceId} has no signed XML — cannot send. The invoice must be regenerated.`,
       );
-
-      const cert = await this.certificates.getActiveCertificate(companyId);
-
-      // Build XML based on document type
-      // The invoice should already have been validated before being queued.
-      // Here we rebuild the XML from stored data if it was somehow lost.
-      const unsignedXml = invoice.xmlContent;
-      if (!unsignedXml) {
-        throw new Error(
-          `Invoice ${invoiceId} has no XML content — cannot sign. The invoice must be regenerated.`,
-        );
-      }
-
-      signedXml = this.xmlSigner.sign(unsignedXml, cert.pfxBuffer, cert.passphrase);
-      xmlHash = this.xmlSigner.getXmlHash(signedXml);
-
       await this.prisma.client.invoice.update({
         where: { id: invoiceId },
         data: {
-          xmlContent: signedXml,
-          xmlHash,
-          xmlSigned: true,
+          status: 'REJECTED',
+          sunatCode: 'INTERNAL_ERROR',
+          sunatMessage: 'Invoice has no signed XML content. Must be regenerated.',
+          lastError: 'Missing signed XML in processor',
         },
       });
+      return; // Don't retry — needs manual intervention
     }
+
+    const signedXml = invoice.xmlContent;
 
     // 5. Create ZIP for SUNAT
     const correlativoPadded = String(invoice.correlativo).padStart(8, '0');
@@ -163,8 +142,11 @@ export class InvoiceSendProcessor extends WorkerHost {
     }
 
     // 7. Send to SUNAT
+    // Retention (20) and Perception (40) documents use a different SUNAT endpoint
+    const endpointType = ['20', '40'].includes(invoice.tipoDoc) ? 'retention' as const : 'invoice' as const;
+
     this.logger.log(
-      `Sending ${zipFileName} to SUNAT (${company.isBeta ? 'beta' : 'prod'})`,
+      `Sending ${zipFileName} to SUNAT (${company.isBeta ? 'beta' : 'prod'}, endpoint=${endpointType})`,
     );
 
     const result = await this.sunatClient.sendBill(
@@ -174,6 +156,7 @@ export class InvoiceSendProcessor extends WorkerHost {
       solUser,
       solPass,
       company.isBeta,
+      endpointType,
     );
 
     // 8. Process result

@@ -161,23 +161,6 @@ function createMocks() {
     },
   };
 
-  const xmlBuilder = {
-    buildInvoice: vi.fn(),
-    buildCreditNote: vi.fn(),
-    buildDebitNote: vi.fn(),
-    buildSummary: vi.fn(),
-    buildVoided: vi.fn(),
-    buildRetention: vi.fn(),
-    buildPerception: vi.fn(),
-    buildGuide: vi.fn(),
-  };
-
-  const xmlSigner = {
-    sign: vi.fn(),
-    getXmlHash: vi.fn(),
-    getDigestValue: vi.fn(),
-  };
-
   const sunatClient = {
     sendBill: vi.fn(),
     sendSummary: vi.fn(),
@@ -187,10 +170,6 @@ function createMocks() {
 
   const cdrProcessor = {
     processCdr: vi.fn(),
-  };
-
-  const certificates = {
-    getActiveCertificate: vi.fn(),
   };
 
   const companies = {
@@ -206,11 +185,8 @@ function createMocks() {
 
   return {
     prisma,
-    xmlBuilder,
-    xmlSigner,
     sunatClient,
     cdrProcessor,
-    certificates,
     companies,
     webhooks,
     pdfQueue,
@@ -221,11 +197,8 @@ function createMocks() {
 function createProcessor(mocks: ReturnType<typeof createMocks>) {
   return new InvoiceSendProcessor(
     mocks.prisma as any,
-    mocks.xmlBuilder as any,
-    mocks.xmlSigner as any,
     mocks.sunatClient as any,
     mocks.cdrProcessor as any,
-    mocks.certificates as any,
     mocks.companies as any,
     mocks.webhooks as any,
     mocks.pdfQueue as any,
@@ -496,93 +469,58 @@ describe('InvoiceSendProcessor', () => {
     });
   });
 
-  // ── 6. No signed XML — rebuild and sign ────────────────────────────
+  // ── 6. No signed XML — rejected ─────────────────────────────────────
 
-  describe('no signed XML — rebuild and sign', () => {
-    it('should re-sign the XML when xmlSigned=false', async () => {
-      const unsignedInvoice = makeInvoice({
-        xmlSigned: false,
-        xmlContent: '<unsignedXml/>',
-        xmlHash: null,
-      });
-      mocks.prisma.client.invoice.findFirst.mockResolvedValue(unsignedInvoice);
-      mocks.prisma.client.invoice.update.mockResolvedValue(
-        makeInvoice({ status: 'ACCEPTED' }),
+  describe('no signed XML', () => {
+    it('should set REJECTED when xmlSigned=false (processor no longer re-signs)', async () => {
+      mocks.prisma.client.invoice.findFirst.mockResolvedValue(
+        makeInvoice({ xmlSigned: false, xmlContent: '<unsignedXml/>', xmlHash: null }),
       );
+      mocks.prisma.client.invoice.update.mockResolvedValue({});
       mocks.prisma.client.company.findUnique.mockResolvedValue(makeCompany());
-
-      mocks.certificates.getActiveCertificate.mockResolvedValue({
-        pfxBuffer: Buffer.from('fake-pfx'),
-        passphrase: '12345678',
-      });
-
-      mocks.xmlSigner.sign.mockReturnValue('<reSignedXml/>');
-      mocks.xmlSigner.getXmlHash.mockReturnValue('newhash');
-
-      mocks.sunatClient.sendBill.mockResolvedValue({
-        success: true,
-        cdrZip: Buffer.from('fake-cdr'),
-      });
-      mocks.cdrProcessor.processCdr.mockReturnValue(makeCdrResult());
-      mocks.webhooks.notifyInvoiceStatus.mockResolvedValue(undefined);
-      mocks.pdfQueue.add.mockResolvedValue({ id: 'pdf-1' });
-      mocks.emailQueue.add.mockResolvedValue({ id: 'email-1' });
 
       const job = makeJob();
       await processor.process(job);
 
-      // Should load the certificate
-      expect(mocks.certificates.getActiveCertificate).toHaveBeenCalledWith('comp-1');
-
-      // Should sign the XML
-      expect(mocks.xmlSigner.sign).toHaveBeenCalledWith(
-        '<unsignedXml/>',
-        Buffer.from('fake-pfx'),
-        '12345678',
-      );
-      expect(mocks.xmlSigner.getXmlHash).toHaveBeenCalledWith('<reSignedXml/>');
-
-      // Should update DB with signed XML
+      // Should have updated status to REJECTED with INTERNAL_ERROR
       expect(mocks.prisma.client.invoice.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'inv-001' },
           data: expect.objectContaining({
-            xmlContent: '<reSignedXml/>',
-            xmlHash: 'newhash',
-            xmlSigned: true,
+            status: 'REJECTED',
+            sunatCode: 'INTERNAL_ERROR',
+            sunatMessage: expect.stringContaining('no signed XML'),
           }),
         }),
       );
 
-      // Should create ZIP with the re-signed XML
-      expect(mockCreateZipFromXml).toHaveBeenCalledWith(
-        '<reSignedXml/>',
-        expect.stringContaining('20000000001-01-F001'),
-      );
-
-      // Should still send to SUNAT
-      expect(mocks.sunatClient.sendBill).toHaveBeenCalledOnce();
+      // Should NOT have sent to SUNAT
+      expect(mocks.sunatClient.sendBill).not.toHaveBeenCalled();
     });
   });
 
   // ── 7. No XML content at all ───────────────────────────────────────
 
   describe('no XML content at all', () => {
-    it('should throw an error when xmlContent is null and xmlSigned is false', async () => {
+    it('should set REJECTED when xmlContent is null', async () => {
       mocks.prisma.client.invoice.findFirst.mockResolvedValue(
         makeInvoice({ xmlContent: null, xmlSigned: false, xmlHash: null }),
       );
       mocks.prisma.client.invoice.update.mockResolvedValue({});
       mocks.prisma.client.company.findUnique.mockResolvedValue(makeCompany());
-      mocks.certificates.getActiveCertificate.mockResolvedValue({
-        pfxBuffer: Buffer.from('fake-pfx'),
-        passphrase: '12345678',
-      });
 
       const job = makeJob();
+      await processor.process(job);
 
-      await expect(processor.process(job)).rejects.toThrow(
-        /no XML content/i,
+      // Should have set REJECTED
+      expect(mocks.prisma.client.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'inv-001' },
+          data: expect.objectContaining({
+            status: 'REJECTED',
+            sunatCode: 'INTERNAL_ERROR',
+          }),
+        }),
       );
 
       // Should not have sent to SUNAT
@@ -681,6 +619,7 @@ describe('InvoiceSendProcessor', () => {
         'MODDATOS',     // solUser
         'moddatos',     // solPass
         true,           // isBeta
+        'invoice',      // endpointType
       );
 
       // getSolCredentials should NOT be called for beta
@@ -713,6 +652,7 @@ describe('InvoiceSendProcessor', () => {
         'MIUSUARIO',   // from getSolCredentials
         'miClave123',  // from getSolCredentials
         false,         // isBeta=false
+        'invoice',     // endpointType
       );
     });
 

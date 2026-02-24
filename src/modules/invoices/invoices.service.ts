@@ -140,15 +140,66 @@ export class InvoicesService {
       company,
     );
 
-    // 7. Build XML, sign, send (wrapped to log correlativo gap on failure)
-    try {
-    const xmlClient = this.buildXmlClient(dto);
-
     // Determine effective tipoOperacion (detracción overrides to '1001')
     const effectiveTipoOperacion = dto.codigoDetraccion ? '1001' : tipoOperacion;
 
+    // 7. Create invoice record with DRAFT status immediately to preserve correlativo
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: effectiveTipoOperacion,
+        fechaEmision: new Date(dto.fechaEmision),
+        fechaVencimiento: dto.fechaVencimiento
+          ? new Date(dto.fechaVencimiento)
+          : null,
+        clienteTipoDoc: dto.clienteTipoDoc,
+        clienteNumDoc: dto.clienteNumDoc,
+        clienteNombre: dto.clienteNombre,
+        clienteDireccion: dto.clienteDireccion,
+        clienteEmail: dto.clienteEmail,
+        moneda,
+        opGravadas: totals.opGravadas,
+        opExoneradas: totals.opExoneradas,
+        opInafectas: totals.opInafectas,
+        opGratuitas: totals.opGratuitas,
+        igv: totals.igv,
+        isc: totals.isc,
+        icbper: totals.icbper,
+        opIvap: totals.opIvap,
+        igvIvap: totals.igvIvap,
+        otrosCargos: totals.otrosCargos,
+        descuentoGlobal: totals.descuentoGlobal,
+        totalVenta: totals.totalVenta,
+        formaPago,
+        cuotas: dto.cuotas?.map((c) => ({ monto: c.monto, moneda: c.moneda, fechaPago: c.fechaPago })) ?? undefined,
+        status: 'DRAFT',
+        items: {
+          create: calculatedItems.map((item) => ({
+            cantidad: item.dto.cantidad,
+            unidadMedida: item.dto.unidadMedida ?? 'NIU',
+            descripcion: item.dto.descripcion,
+            codigo: item.dto.codigo,
+            codigoSunat: item.dto.codigoSunat,
+            valorUnitario: item.calc.valorUnitario,
+            precioUnitario: item.calc.precioUnitario,
+            valorVenta: item.calc.valorVenta,
+            tipoAfectacion: item.tipoAfectacion,
+            igv: item.calc.igv,
+            isc: item.calc.isc,
+            icbper: item.calc.icbper,
+            descuento: item.calc.descuento,
+          })),
+        },
+      },
+    });
+
+    // 8. Build XML, sign, send to SUNAT, update invoice record
+    const xmlClient = this.buildXmlClient(dto);
+
     // Auto-generate horaEmision with current time to avoid SUNAT observations
-    // when sending documents with default '00:00:00' at a different hour.
     const horaEmision = new Date().toTimeString().slice(0, 8); // HH:MM:SS
 
     const invoiceData: XmlInvoiceData = {
@@ -211,39 +262,13 @@ export class InvoicesService {
     const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
     const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
 
-    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, shouldRetry } =
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
       await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta);
 
-    // 10. Save to database
-    const invoice = await this.prisma.client.invoice.create({
+    // 10. Update invoice with XML content and SUNAT response
+    const updatedInvoice = await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
       data: {
-        companyId,
-        tipoDoc,
-        serie,
-        correlativo,
-        tipoOperacion: effectiveTipoOperacion,
-        fechaEmision: new Date(dto.fechaEmision),
-        fechaVencimiento: dto.fechaVencimiento
-          ? new Date(dto.fechaVencimiento)
-          : null,
-        clienteTipoDoc: dto.clienteTipoDoc,
-        clienteNumDoc: dto.clienteNumDoc,
-        clienteNombre: dto.clienteNombre,
-        clienteDireccion: dto.clienteDireccion,
-        clienteEmail: dto.clienteEmail,
-        moneda,
-        opGravadas: totals.opGravadas + totals.opIvap,
-        opExoneradas: totals.opExoneradas,
-        opInafectas: totals.opInafectas,
-        opGratuitas: totals.opGratuitas,
-        igv: totals.igv + totals.igvIvap,
-        isc: totals.isc,
-        icbper: totals.icbper,
-        otrosCargos: totals.otrosCargos,
-        descuentoGlobal: totals.descuentoGlobal,
-        totalVenta: totals.totalVenta,
-        formaPago,
-        cuotas: dto.cuotas?.map((c) => ({ monto: c.monto, moneda: c.moneda, fechaPago: c.fechaPago })) ?? undefined,
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -255,23 +280,6 @@ export class InvoicesService {
         sentAt: status !== 'PENDING' ? new Date() : undefined,
         attempts: status !== 'PENDING' ? 1 : 0,
         lastAttemptAt: new Date(),
-        items: {
-          create: calculatedItems.map((item) => ({
-            cantidad: item.dto.cantidad,
-            unidadMedida: item.dto.unidadMedida ?? 'NIU',
-            descripcion: item.dto.descripcion,
-            codigo: item.dto.codigo,
-            codigoSunat: item.dto.codigoSunat,
-            valorUnitario: item.calc.valorUnitario,
-            precioUnitario: item.calc.precioUnitario,
-            valorVenta: item.calc.valorVenta,
-            tipoAfectacion: item.tipoAfectacion,
-            igv: item.calc.igv,
-            isc: item.calc.isc,
-            icbper: item.calc.icbper,
-            descuento: item.calc.descuento,
-          })),
-        },
       },
     });
 
@@ -279,19 +287,10 @@ export class InvoicesService {
       `Invoice created: ${serie}-${correlativo} (${tipoDoc}) status=${status} sunat=${sunatCode ?? 'N/A'}`,
     );
 
-    // Queue retry for transient failures (network timeout, DNS, etc.)
-    if (shouldRetry) {
-      this.queueRetry(invoice.id, companyId);
-    }
-
     // Increment billing quota counter (fire-and-forget)
     void this.billing.incrementInvoiceCount(companyId);
 
-    return this.toResponseDto(invoice);
-    } catch (error) {
-      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
-      throw error;
-    }
+    return this.toResponseDto(updatedInvoice);
   }
 
   /**
@@ -331,9 +330,59 @@ export class InvoicesService {
       serieName,
     );
 
-    // Build XML, sign, send (wrapped to log correlativo gap on failure)
-    try {
     const { calculatedItems, totals, xmlItems } = this.calculateItemsAndTotals(dto.items);
+
+    // Create invoice record with DRAFT status immediately to preserve correlativo
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: '0101',
+        fechaEmision: new Date(dto.fechaEmision),
+        clienteTipoDoc: dto.clienteTipoDoc,
+        clienteNumDoc: dto.clienteNumDoc,
+        clienteNombre: dto.clienteNombre,
+        clienteDireccion: dto.clienteDireccion,
+        clienteEmail: dto.clienteEmail,
+        moneda,
+        opGravadas: totals.opGravadas,
+        opExoneradas: totals.opExoneradas,
+        opInafectas: totals.opInafectas,
+        opGratuitas: totals.opGratuitas,
+        igv: totals.igv,
+        isc: totals.isc,
+        icbper: totals.icbper,
+        opIvap: totals.opIvap,
+        igvIvap: totals.igvIvap,
+        totalVenta: totals.totalVenta,
+        docRefTipo: dto.docRefTipo,
+        docRefSerie: dto.docRefSerie,
+        docRefCorrelativo: dto.docRefCorrelativo,
+        motivoNota: dto.motivoNota,
+        status: 'DRAFT',
+        items: {
+          create: calculatedItems.map((item) => ({
+            cantidad: item.dto.cantidad,
+            unidadMedida: item.dto.unidadMedida ?? 'NIU',
+            descripcion: item.dto.descripcion,
+            codigo: item.dto.codigo,
+            codigoSunat: item.dto.codigoSunat,
+            valorUnitario: item.calc.valorUnitario,
+            precioUnitario: item.calc.precioUnitario,
+            valorVenta: item.calc.valorVenta,
+            tipoAfectacion: item.tipoAfectacion,
+            igv: item.calc.igv,
+            isc: item.calc.isc,
+            icbper: item.calc.icbper,
+            descuento: item.calc.descuento,
+          })),
+        },
+      },
+    });
+
+    // Build XML, sign, send to SUNAT
     const xmlClient = this.buildXmlClient(dto);
 
     const noteData: XmlCreditNoteData = {
@@ -367,35 +416,12 @@ export class InvoicesService {
     const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
     const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
 
-    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, shouldRetry } =
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
       await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta);
 
-    const invoice = await this.prisma.client.invoice.create({
+    const updatedInvoice = await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
       data: {
-        companyId,
-        tipoDoc,
-        serie,
-        correlativo,
-        tipoOperacion: '0101',
-        fechaEmision: new Date(dto.fechaEmision),
-        clienteTipoDoc: dto.clienteTipoDoc,
-        clienteNumDoc: dto.clienteNumDoc,
-        clienteNombre: dto.clienteNombre,
-        clienteDireccion: dto.clienteDireccion,
-        clienteEmail: dto.clienteEmail,
-        moneda,
-        opGravadas: totals.opGravadas + totals.opIvap,
-        opExoneradas: totals.opExoneradas,
-        opInafectas: totals.opInafectas,
-        opGratuitas: totals.opGratuitas,
-        igv: totals.igv + totals.igvIvap,
-        isc: totals.isc,
-        icbper: totals.icbper,
-        totalVenta: totals.totalVenta,
-        docRefTipo: dto.docRefTipo,
-        docRefSerie: dto.docRefSerie,
-        docRefCorrelativo: dto.docRefCorrelativo,
-        motivoNota: dto.motivoNota,
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -407,39 +433,14 @@ export class InvoicesService {
         sentAt: status !== 'PENDING' ? new Date() : undefined,
         attempts: status !== 'PENDING' ? 1 : 0,
         lastAttemptAt: new Date(),
-        items: {
-          create: calculatedItems.map((item) => ({
-            cantidad: item.dto.cantidad,
-            unidadMedida: item.dto.unidadMedida ?? 'NIU',
-            descripcion: item.dto.descripcion,
-            codigo: item.dto.codigo,
-            codigoSunat: item.dto.codigoSunat,
-            valorUnitario: item.calc.valorUnitario,
-            precioUnitario: item.calc.precioUnitario,
-            valorVenta: item.calc.valorVenta,
-            tipoAfectacion: item.tipoAfectacion,
-            igv: item.calc.igv,
-            isc: item.calc.isc,
-            icbper: item.calc.icbper,
-            descuento: item.calc.descuento,
-          })),
-        },
       },
     });
 
     this.logger.log(`Credit Note created: ${serie}-${correlativo} status=${status}`);
 
-    if (shouldRetry) {
-      this.queueRetry(invoice.id, companyId);
-    }
-
     void this.billing.incrementInvoiceCount(companyId);
 
-    return this.toResponseDto(invoice);
-    } catch (error) {
-      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
-      throw error;
-    }
+    return this.toResponseDto(updatedInvoice);
   }
 
   /**
@@ -478,9 +479,59 @@ export class InvoicesService {
       serieName,
     );
 
-    // Build XML, sign, send (wrapped to log correlativo gap on failure)
-    try {
     const { calculatedItems, totals, xmlItems } = this.calculateItemsAndTotals(dto.items);
+
+    // Create invoice record with DRAFT status immediately to preserve correlativo
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: '0101',
+        fechaEmision: new Date(dto.fechaEmision),
+        clienteTipoDoc: dto.clienteTipoDoc,
+        clienteNumDoc: dto.clienteNumDoc,
+        clienteNombre: dto.clienteNombre,
+        clienteDireccion: dto.clienteDireccion,
+        clienteEmail: dto.clienteEmail,
+        moneda,
+        opGravadas: totals.opGravadas,
+        opExoneradas: totals.opExoneradas,
+        opInafectas: totals.opInafectas,
+        opGratuitas: totals.opGratuitas,
+        igv: totals.igv,
+        isc: totals.isc,
+        icbper: totals.icbper,
+        opIvap: totals.opIvap,
+        igvIvap: totals.igvIvap,
+        totalVenta: totals.totalVenta,
+        docRefTipo: dto.docRefTipo,
+        docRefSerie: dto.docRefSerie,
+        docRefCorrelativo: dto.docRefCorrelativo,
+        motivoNota: dto.motivoNota,
+        status: 'DRAFT',
+        items: {
+          create: calculatedItems.map((item) => ({
+            cantidad: item.dto.cantidad,
+            unidadMedida: item.dto.unidadMedida ?? 'NIU',
+            descripcion: item.dto.descripcion,
+            codigo: item.dto.codigo,
+            codigoSunat: item.dto.codigoSunat,
+            valorUnitario: item.calc.valorUnitario,
+            precioUnitario: item.calc.precioUnitario,
+            valorVenta: item.calc.valorVenta,
+            tipoAfectacion: item.tipoAfectacion,
+            igv: item.calc.igv,
+            isc: item.calc.isc,
+            icbper: item.calc.icbper,
+            descuento: item.calc.descuento,
+          })),
+        },
+      },
+    });
+
+    // Build XML, sign, send to SUNAT
     const xmlClient = this.buildXmlClient(dto);
 
     const noteData: XmlDebitNoteData = {
@@ -514,35 +565,12 @@ export class InvoicesService {
     const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
     const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
 
-    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, shouldRetry } =
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
       await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta);
 
-    const invoice = await this.prisma.client.invoice.create({
+    const updatedInvoice = await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
       data: {
-        companyId,
-        tipoDoc,
-        serie,
-        correlativo,
-        tipoOperacion: '0101',
-        fechaEmision: new Date(dto.fechaEmision),
-        clienteTipoDoc: dto.clienteTipoDoc,
-        clienteNumDoc: dto.clienteNumDoc,
-        clienteNombre: dto.clienteNombre,
-        clienteDireccion: dto.clienteDireccion,
-        clienteEmail: dto.clienteEmail,
-        moneda,
-        opGravadas: totals.opGravadas + totals.opIvap,
-        opExoneradas: totals.opExoneradas,
-        opInafectas: totals.opInafectas,
-        opGratuitas: totals.opGratuitas,
-        igv: totals.igv + totals.igvIvap,
-        isc: totals.isc,
-        icbper: totals.icbper,
-        totalVenta: totals.totalVenta,
-        docRefTipo: dto.docRefTipo,
-        docRefSerie: dto.docRefSerie,
-        docRefCorrelativo: dto.docRefCorrelativo,
-        motivoNota: dto.motivoNota,
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -554,39 +582,14 @@ export class InvoicesService {
         sentAt: status !== 'PENDING' ? new Date() : undefined,
         attempts: status !== 'PENDING' ? 1 : 0,
         lastAttemptAt: new Date(),
-        items: {
-          create: calculatedItems.map((item) => ({
-            cantidad: item.dto.cantidad,
-            unidadMedida: item.dto.unidadMedida ?? 'NIU',
-            descripcion: item.dto.descripcion,
-            codigo: item.dto.codigo,
-            codigoSunat: item.dto.codigoSunat,
-            valorUnitario: item.calc.valorUnitario,
-            precioUnitario: item.calc.precioUnitario,
-            valorVenta: item.calc.valorVenta,
-            tipoAfectacion: item.tipoAfectacion,
-            igv: item.calc.igv,
-            isc: item.calc.isc,
-            icbper: item.calc.icbper,
-            descuento: item.calc.descuento,
-          })),
-        },
       },
     });
 
     this.logger.log(`Debit Note created: ${serie}-${correlativo} status=${status}`);
 
-    if (shouldRetry) {
-      this.queueRetry(invoice.id, companyId);
-    }
-
     void this.billing.incrementInvoiceCount(companyId);
 
-    return this.toResponseDto(invoice);
-    } catch (error) {
-      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
-      throw error;
-    }
+    return this.toResponseDto(updatedInvoice);
   }
 
   /**
@@ -830,8 +833,6 @@ export class InvoicesService {
     const rcSerieKey = `RC-${dateStr}`;
     const correlativo = await this.atomicIncrementCorrelativo(companyId, rcSerieKey);
 
-    // Build XML, sign, send (wrapped to log correlativo gap on failure)
-    try {
     // Build summary lines
     const summaryLines: XmlSummaryLine[] = dto.items.map((item) => ({
       tipoDoc: item.tipoDoc,
@@ -855,28 +856,9 @@ export class InvoicesService {
       docRefCorrelativo: item.docRefCorrelativo,
     }));
 
-    const summaryData: XmlSummaryData = {
-      correlativo,
-      fechaReferencia: dto.fechaReferencia,
-      fechaEmision,
-      company: xmlCompany,
-      items: summaryLines,
-    };
-
-    // Build XML
-    const xmlContent = this.xmlBuilder.buildSummary(summaryData);
-
-    // Sign XML
-    const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
-
-    // Create ZIP: {RUC}-RC-{YYYYMMDD}-{NNNNN}.zip
     const summaryId = `RC-${dateStr}-${correlativo.toString().padStart(5, '0')}`;
-    const xmlFileName = `${company.ruc}-${summaryId}.xml`;
-    const zipFileName = xmlFileName.replace('.xml', '.zip');
-    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
 
-    // Persist Invoice record so ticket-poll processor can update it
-    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
+    // Create invoice record with DRAFT status immediately to preserve correlativo
     const invoice = await this.prisma.client.invoice.create({
       data: {
         companyId,
@@ -889,6 +871,30 @@ export class InvoicesService {
         clienteNombre: company.razonSocial,
         moneda,
         totalVenta: summaryLines.reduce((s, i) => s + i.totalVenta, 0),
+        status: 'DRAFT',
+      },
+    });
+
+    // Build XML, sign, create ZIP
+    const summaryData: XmlSummaryData = {
+      correlativo,
+      fechaReferencia: dto.fechaReferencia,
+      fechaEmision,
+      company: xmlCompany,
+      items: summaryLines,
+    };
+
+    const xmlContent = this.xmlBuilder.buildSummary(summaryData);
+    const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
+    const xmlFileName = `${company.ruc}-${summaryId}.xml`;
+    const zipFileName = xmlFileName.replace('.xml', '.zip');
+    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
+    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
+
+    // Update invoice with signed XML
+    await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
+      data: {
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -948,10 +954,6 @@ export class InvoicesService {
       ticket,
       sunatDocumentId: summaryId,
     };
-    } catch (error) {
-      this.logger.warn(`Correlativo gap: ${rcSerieKey}-${correlativo} was allocated but document creation failed`);
-      throw error;
-    }
   }
 
   /**
@@ -977,8 +979,6 @@ export class InvoicesService {
     const raSerieKey = `RA-${dateStr}`;
     const correlativo = await this.atomicIncrementCorrelativo(companyId, raSerieKey);
 
-    // Build XML, sign, send (wrapped to log correlativo gap on failure)
-    try {
     // Build voided lines
     const voidedLines: XmlVoidedLine[] = dto.items.map((item) => ({
       tipoDoc: item.tipoDoc,
@@ -987,28 +987,9 @@ export class InvoicesService {
       motivo: item.motivo,
     }));
 
-    const voidedData: XmlVoidedData = {
-      correlativo,
-      fechaReferencia: dto.fechaReferencia,
-      fechaEmision,
-      company: xmlCompany,
-      items: voidedLines,
-    };
-
-    // Build XML
-    const xmlContent = this.xmlBuilder.buildVoided(voidedData);
-
-    // Sign XML
-    const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
-
-    // Create ZIP: {RUC}-RA-{YYYYMMDD}-{NNNNN}.zip
     const voidedId = `RA-${dateStr}-${correlativo.toString().padStart(5, '0')}`;
-    const xmlFileName = `${company.ruc}-${voidedId}.xml`;
-    const zipFileName = xmlFileName.replace('.xml', '.zip');
-    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
 
-    // Persist Invoice record so ticket-poll processor can update it
-    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
+    // Create invoice record with DRAFT status immediately to preserve correlativo
     const invoice = await this.prisma.client.invoice.create({
       data: {
         companyId,
@@ -1021,6 +1002,30 @@ export class InvoicesService {
         clienteNombre: company.razonSocial,
         moneda: 'PEN',
         totalVenta: 0,
+        status: 'DRAFT',
+      },
+    });
+
+    // Build XML, sign, create ZIP
+    const voidedData: XmlVoidedData = {
+      correlativo,
+      fechaReferencia: dto.fechaReferencia,
+      fechaEmision,
+      company: xmlCompany,
+      items: voidedLines,
+    };
+
+    const xmlContent = this.xmlBuilder.buildVoided(voidedData);
+    const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
+    const xmlFileName = `${company.ruc}-${voidedId}.xml`;
+    const zipFileName = xmlFileName.replace('.xml', '.zip');
+    const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
+    const xmlHash = this.xmlSigner.getXmlHash(signedXml);
+
+    // Update invoice with signed XML
+    await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
+      data: {
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -1080,10 +1085,6 @@ export class InvoicesService {
       ticket,
       sunatDocumentId: voidedId,
     };
-    } catch (error) {
-      this.logger.warn(`Correlativo gap: ${raSerieKey}-${correlativo} was allocated but document creation failed`);
-      throw error;
-    }
   }
 
   /**
@@ -1107,8 +1108,6 @@ export class InvoicesService {
       companyId, tipoDoc, company, serieRetencion,
     );
 
-    // Build XML, sign, send (wrapped to log correlativo gap on failure)
-    try {
     // Calculate retention amounts per item
     const retentionItems: XmlRetentionLine[] = dto.items.map((item) => {
       const importeRetenido = round2(item.importeTotal * tasaRetencion);
@@ -1129,7 +1128,27 @@ export class InvoicesService {
 
     const totalRetenido = round2(retentionItems.reduce((s, i) => s + i.importeRetenido, 0));
     const totalPagado = round2(retentionItems.reduce((s, i) => s + i.importePagado, 0));
+    const totalVenta = round2(retentionItems.reduce((s, i) => s + i.importeTotal, 0));
 
+    // Create invoice record with DRAFT status immediately to preserve correlativo
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: tipoDoc,
+        fechaEmision: new Date(dto.fechaEmision),
+        clienteTipoDoc: dto.proveedorTipoDoc,
+        clienteNumDoc: dto.proveedorNumDoc,
+        clienteNombre: dto.proveedorNombre,
+        moneda,
+        totalVenta,
+        status: 'DRAFT',
+      },
+    });
+
+    // Build XML, sign, send to SUNAT
     const xmlProveedor: XmlClient = {
       tipoDocIdentidad: dto.proveedorTipoDoc,
       numDocIdentidad: dto.proveedorNumDoc,
@@ -1152,24 +1171,12 @@ export class InvoicesService {
     const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
     const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
 
-    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, shouldRetry } =
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
       await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta, 'retention');
 
-    const totalVenta = round2(retentionItems.reduce((s, i) => s + i.importeTotal, 0));
-
-    const invoice = await this.prisma.client.invoice.create({
+    const updatedInvoice = await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
       data: {
-        companyId,
-        tipoDoc,
-        serie,
-        correlativo,
-        tipoOperacion: tipoDoc, // '20' for retention (no Cat 51 code applies)
-        fechaEmision: new Date(dto.fechaEmision),
-        clienteTipoDoc: dto.proveedorTipoDoc,
-        clienteNumDoc: dto.proveedorNumDoc,
-        clienteNombre: dto.proveedorNombre,
-        moneda,
-        totalVenta,
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -1185,15 +1192,8 @@ export class InvoicesService {
     });
 
     this.logger.log(`Retention created: ${serie}-${correlativo} status=${status}`);
-    if (shouldRetry) {
-      this.queueRetry(invoice.id, companyId);
-    }
     void this.billing.incrementInvoiceCount(companyId);
-    return this.toResponseDto(invoice);
-    } catch (error) {
-      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
-      throw error;
-    }
+    return this.toResponseDto(updatedInvoice);
   }
 
   /**
@@ -1217,8 +1217,6 @@ export class InvoicesService {
       companyId, tipoDoc, company, seriePercepcion,
     );
 
-    // Build XML, sign, send (wrapped to log correlativo gap on failure)
-    try {
     // Calculate perception amounts per item
     const perceptionItems: XmlPerceptionLine[] = dto.items.map((item) => {
       const importePercibido = round2(item.importeTotal * tasaPercepcion);
@@ -1239,7 +1237,27 @@ export class InvoicesService {
 
     const totalPercibido = round2(perceptionItems.reduce((s, i) => s + i.importePercibido, 0));
     const totalCobrado = round2(perceptionItems.reduce((s, i) => s + i.importeCobrado, 0));
+    const totalVenta = round2(perceptionItems.reduce((s, i) => s + i.importeTotal, 0));
 
+    // Create invoice record with DRAFT status immediately to preserve correlativo
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: tipoDoc,
+        fechaEmision: new Date(dto.fechaEmision),
+        clienteTipoDoc: dto.clienteTipoDoc,
+        clienteNumDoc: dto.clienteNumDoc,
+        clienteNombre: dto.clienteNombre,
+        moneda,
+        totalVenta,
+        status: 'DRAFT',
+      },
+    });
+
+    // Build XML, sign, send to SUNAT
     const xmlCliente: XmlClient = {
       tipoDocIdentidad: dto.clienteTipoDoc,
       numDocIdentidad: dto.clienteNumDoc,
@@ -1262,24 +1280,12 @@ export class InvoicesService {
     const signedXml = this.xmlSigner.sign(xmlContent, cert.pfxBuffer, cert.passphrase);
     const xmlFileName = `${company.ruc}-${tipoDoc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
 
-    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, shouldRetry } =
+    const { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash } =
       await this.signAndSendSoap(signedXml, xmlFileName, ruc, solUser, solPass, company.isBeta, 'retention');
 
-    const totalVenta = round2(perceptionItems.reduce((s, i) => s + i.importeTotal, 0));
-
-    const invoice = await this.prisma.client.invoice.create({
+    const updatedInvoice = await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
       data: {
-        companyId,
-        tipoDoc,
-        serie,
-        correlativo,
-        tipoOperacion: tipoDoc, // '40' for perception (no Cat 51 code applies)
-        fechaEmision: new Date(dto.fechaEmision),
-        clienteTipoDoc: dto.clienteTipoDoc,
-        clienteNumDoc: dto.clienteNumDoc,
-        clienteNombre: dto.clienteNombre,
-        moneda,
-        totalVenta,
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -1295,15 +1301,8 @@ export class InvoicesService {
     });
 
     this.logger.log(`Perception created: ${serie}-${correlativo} status=${status}`);
-    if (shouldRetry) {
-      this.queueRetry(invoice.id, companyId);
-    }
     void this.billing.incrementInvoiceCount(companyId);
-    return this.toResponseDto(invoice);
-    } catch (error) {
-      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
-      throw error;
-    }
+    return this.toResponseDto(updatedInvoice);
   }
 
   /**
@@ -1329,8 +1328,25 @@ export class InvoicesService {
       companyId, tipoDoc, company, serieGuia,
     );
 
-    // Build XML, sign, send (wrapped to log correlativo gap on failure)
-    try {
+    // 7. Create invoice record with DRAFT status immediately to preserve correlativo
+    const invoice = await this.prisma.client.invoice.create({
+      data: {
+        companyId,
+        tipoDoc,
+        serie,
+        correlativo,
+        tipoOperacion: tipoDoc, // '09' for guide (no Cat 51 code applies)
+        fechaEmision: new Date(dto.fechaEmision),
+        clienteTipoDoc: dto.destinatarioTipoDoc,
+        clienteNumDoc: dto.destinatarioNumDoc,
+        clienteNombre: dto.destinatarioNombre,
+        moneda: 'PEN',
+        totalVenta: 0, // Guide has no monetary totals
+        status: 'DRAFT',
+      },
+    });
+
+    // 8. Build XML and sign
     const xmlDestinatario: XmlClient = {
       tipoDocIdentidad: dto.destinatarioTipoDoc,
       numDocIdentidad: dto.destinatarioNumDoc,
@@ -1376,6 +1392,7 @@ export class InvoicesService {
     const zipFileName = xmlFileName.replace('.xml', '.zip');
     const zipBuffer = await createZipFromXml(signedXml, xmlFileName);
 
+    // 9. Send via SUNAT GRE REST API
     let status = 'SENDING';
     let sunatCode: string | undefined;
     let sunatMessage: string | undefined;
@@ -1384,7 +1401,6 @@ export class InvoicesService {
     let ticket: string | undefined;
 
     try {
-      // Send via SUNAT GRE REST API (returns ticket, async processing)
       const sendResult = await this.sunatGreClient.sendGuide(
         zipBuffer, zipFileName, ruc, solUser, solPass,
         serie, correlativo, company.isBeta,
@@ -1430,19 +1446,10 @@ export class InvoicesService {
       sunatMessage = msg;
     }
 
-    const invoice = await this.prisma.client.invoice.create({
+    // 10. Update invoice with XML content and SUNAT response
+    const updatedInvoice = await this.prisma.client.invoice.update({
+      where: { id: invoice.id },
       data: {
-        companyId,
-        tipoDoc,
-        serie,
-        correlativo,
-        tipoOperacion: tipoDoc, // '09' for guide (no Cat 51 code applies)
-        fechaEmision: new Date(dto.fechaEmision),
-        clienteTipoDoc: dto.destinatarioTipoDoc,
-        clienteNumDoc: dto.destinatarioNumDoc,
-        clienteNombre: dto.destinatarioNombre,
-        moneda: 'PEN',
-        totalVenta: 0, // Guide has no monetary totals
         xmlContent: signedXml,
         xmlHash,
         xmlSigned: true,
@@ -1473,11 +1480,7 @@ export class InvoicesService {
 
     this.logger.log(`Guide created: ${serie}-${correlativo} status=${status}`);
     void this.billing.incrementInvoiceCount(companyId);
-    return this.toResponseDto(invoice);
-    } catch (error) {
-      this.logger.warn(`Correlativo gap: ${serie}-${correlativo} was allocated but document creation failed`);
-      throw error;
-    }
+    return this.toResponseDto(updatedInvoice);
   }
 
   /**
@@ -1805,7 +1808,7 @@ export class InvoicesService {
       sunatMessage = msg;
     }
 
-    return { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, zipBuffer, zipFileName, shouldRetry: status === 'PENDING' };
+    return { status, sunatCode, sunatMessage, sunatNotes, cdrZip, xmlHash, zipBuffer, zipFileName };
   }
 
   /**
@@ -1868,27 +1871,6 @@ export class InvoicesService {
       nombre: dto.clienteNombre,
       direccion: dto.clienteDireccion,
     };
-  }
-
-  /**
-   * Queue an invoice for retry via BullMQ when the initial SUNAT send
-   * fails with a transient error (network timeout, DNS, etc.).
-   * Uses exponential backoff starting at 5s, up to 5 attempts.
-   */
-  private queueRetry(invoiceId: string, companyId: string): void {
-    void this.invoiceSendQueue.add(
-      'retry',
-      { invoiceId, companyId },
-      {
-        delay: 5000,
-        attempts: 5,
-        backoff: { type: 'exponential', delay: 2000 },
-        jobId: `retry-${invoiceId}-${Date.now()}`,
-      },
-    ).catch((err: Error) => {
-      this.logger.warn(`Failed to queue retry for invoice ${invoiceId}: ${err.message}`);
-    });
-    this.logger.log(`Queued retry for invoice ${invoiceId}`);
   }
 
   private buildXmlCompany(company: CompanyModel): XmlCompany {
