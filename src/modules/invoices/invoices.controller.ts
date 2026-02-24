@@ -147,14 +147,17 @@ export class InvoicesController {
     @Body() dto: BatchInvoiceDto,
   ) {
     const results = await this.invoicesService.createBatch(companyId, dto);
-    const allSuccess = results.every(r => r.success);
+    const skipped = results.filter(r => r.skipped).length;
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success && !r.skipped).length;
     return {
-      success: allSuccess,
+      success: failed === 0 && skipped === 0,
       data: results,
       summary: {
         total: results.length,
-        successful: results.filter(r => r.success).length,
-        failed: results.filter(r => !r.success).length,
+        successful,
+        failed,
+        skipped,
       },
     };
   }

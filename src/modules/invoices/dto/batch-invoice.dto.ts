@@ -25,4 +25,33 @@ export interface BatchInvoiceResult {
   serie?: string;
   correlativo?: number;
   error?: string;
+  /** True when item was skipped as a duplicate of an earlier batch item */
+  skipped?: boolean;
+  /** Human-readable reason for skipping (e.g. "Duplicate of batch item 0") */
+  skippedReason?: string;
+}
+
+/**
+ * Generates a fingerprint for an invoice DTO to detect duplicates within a batch.
+ * Two items are considered duplicates when they share the same tipoDoc, client document,
+ * emission date, and identical first-item description + cantidad.
+ */
+export function batchItemFingerprint(dto: {
+  tipoDoc?: string;
+  clienteNumDoc: string;
+  fechaEmision: string;
+  items: { descripcion: string; cantidad: number; valorUnitario: number }[];
+}): string {
+  const tipoDoc = dto.tipoDoc ?? '01';
+  const firstItem = dto.items[0];
+  const itemCount = dto.items.length;
+  return [
+    tipoDoc,
+    dto.clienteNumDoc,
+    dto.fechaEmision,
+    itemCount.toString(),
+    firstItem?.descripcion ?? '',
+    firstItem?.cantidad?.toString() ?? '',
+    firstItem?.valorUnitario?.toString() ?? '',
+  ].join('|');
 }

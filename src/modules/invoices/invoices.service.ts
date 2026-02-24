@@ -65,6 +65,7 @@ import type { CreateVoidedDto } from './dto/create-voided.dto.js';
 import type { CreateRetentionDto } from './dto/create-retention.dto.js';
 import type { CreatePerceptionDto } from './dto/create-perception.dto.js';
 import type { CreateGuideDto } from './dto/create-guide.dto.js';
+import { batchItemFingerprint } from './dto/batch-invoice.dto.js';
 import type { BatchInvoiceDto, BatchInvoiceResult } from './dto/batch-invoice.dto.js';
 import type { InvoiceItemDto } from './dto/invoice-item.dto.js';
 import type { InvoiceResponseDto, SummaryResponseDto } from './dto/invoice-response.dto.js';
@@ -2191,7 +2192,31 @@ export class InvoicesService {
   ): Promise<BatchInvoiceResult[]> {
     const results: BatchInvoiceResult[] = [];
 
+    // --- In-batch deduplication ---
+    // Track fingerprints to detect duplicate items within this batch.
+    // A fingerprint is built from: tipoDoc + clienteNumDoc + fechaEmision +
+    // itemCount + first item (descripcion, cantidad, valorUnitario).
+    const seenFingerprints = new Map<string, number>(); // fingerprint → first index
+
     for (const [index, invoiceDto] of dto.invoices.entries()) {
+      // Check for duplicate within the batch
+      const fingerprint = batchItemFingerprint(invoiceDto);
+      const firstIndex = seenFingerprints.get(fingerprint);
+
+      if (firstIndex !== undefined) {
+        this.logger.warn(
+          `Batch item ${index} skipped: duplicate of item ${firstIndex}`,
+        );
+        results.push({
+          index,
+          success: false,
+          skipped: true,
+          skippedReason: `Duplicate of batch item ${firstIndex}`,
+        });
+        continue;
+      }
+      seenFingerprints.set(fingerprint, index);
+
       try {
         const tipoDoc = invoiceDto.tipoDoc ?? '01';
         const response = await this.createInvoice(companyId, { ...invoiceDto, tipoDoc });

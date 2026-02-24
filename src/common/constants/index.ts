@@ -432,3 +432,79 @@ export const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: 'US$',
   EUR: '€',
 } as const;
+
+/** Catálogo 62: Códigos de bienes y servicios normalizados (UNSPSC) — categorías de nivel superior (2 dígitos) */
+export const CODIGO_PRODUCTO_SUNAT_CATEGORIES: Record<string, string> = {
+  '10': 'Material vegetal vivo, de vivero y silvicultivo',
+  '11': 'Organismos y minerales vivos',
+  '12': 'Sustancias químicas',
+  '13': 'Resinas, colofonia, caucho y latex',
+  '14': 'Materiales, papel y productos de papel',
+  '15': 'Combustibles, aditivos para combustibles, lubricantes',
+  '20': 'Equipo y maquinaria de minería y pozos de petróleo',
+  '21': 'Equipo agrícola, de silvicultura y paisaje',
+  '22': 'Maquinaria industrial y de manufactura',
+  '23': 'Maquinaria y equipo de manipulación y acondicionamiento de material',
+  '24': 'Maquinaria y equipo de manipulación y acondicionamiento de materiales',
+  '25': 'Equipo comercial y vehículos de transporte',
+  '26': 'Maquinaria y accesorios de generación y distribución de energía',
+  '27': 'Herramientas, maquinaria y equipo',
+  '30': 'Estructuras, sistemas de construcción',
+  '31': 'Componentes y suministros de manufactura',
+  '32': 'Componentes y suministros electrónicos',
+  '39': 'Luminarias y electricidad',
+  '40': 'Equipo de distribución y acondicionamiento',
+  '41': 'Equipo de laboratorio, medición y observación',
+  '42': 'Equipo e instrumentos médicos',
+  '43': 'Tecnología de información y telecomunicaciones',
+  '44': 'Equipo de oficina, accesorios y suministros',
+  '45': 'Equipo de impresión, fotografía y audiovisual',
+  '46': 'Equipamiento de defensa, seguridad',
+  '47': 'Equipo de limpieza',
+  '48': 'Equipo deportivo y recreativo',
+  '49': 'Equipamiento de cocina y comedor',
+  '50': 'Productos alimenticios, bebidas y tabaco',
+  '51': 'Medicamentos y productos farmacéuticos',
+  '52': 'Productos para el hogar, salud personal',
+  '53': 'Ropa, maletas y productos de aseo',
+  '54': 'Relojería, joyería y piedras preciosas',
+  '55': 'Publicaciones impresas y electrónicas',
+  '56': 'Muebles, mobiliario y decoración',
+  '60': 'Maquinaria y accesorios agrícolas',
+  '70': 'Servicios de gestión y administración',
+  '71': 'Servicios de minería, petróleo y gas',
+  '72': 'Servicios de edificación, construcción',
+  '73': 'Servicios industriales de producción',
+  '76': 'Servicios de limpieza industrial',
+  '77': 'Servicios medioambientales',
+  '78': 'Servicios de transporte, almacenaje y correo',
+  '80': 'Servicios de gestión, profesionales y administrativos',
+  '81': 'Servicios basados en ingeniería e investigación',
+  '82': 'Servicios de publicidad y marketing',
+  '83': 'Servicios de utilidad pública',
+  '84': 'Servicios financieros y de seguros',
+  '85': 'Servicios de salud',
+  '86': 'Servicios educativos',
+  '90': 'Servicios de viaje, alimentación y alojamiento',
+  '91': 'Servicios de aseo personal y doméstico',
+  '92': 'Servicios de defensa y orden público',
+  '93': 'Servicios políticos y cívicos',
+  '94': 'Organizaciones y clubes',
+  '95': 'Terrenos y edificaciones',
+} as const;
+
+/**
+ * Validate an 8-digit SUNAT product code (Catálogo 62 — UNSPSC).
+ *
+ * Rules:
+ * - Must be exactly 8 digits
+ * - First 2 digits must be a valid top-level category from CODIGO_PRODUCTO_SUNAT_CATEGORIES
+ *
+ * @param code - The product code to validate
+ * @returns true if valid, false otherwise
+ */
+export function isValidProductCode(code: string): boolean {
+  if (!/^\d{8}$/.test(code)) return false;
+  const category = code.substring(0, 2);
+  return category in CODIGO_PRODUCTO_SUNAT_CATEGORIES;
+}
