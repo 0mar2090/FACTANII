@@ -8,9 +8,8 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { scrypt, randomBytes, timingSafeEqual } from 'node:crypto';
+import { scrypt, randomBytes, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
-import { createHash } from 'node:crypto';
 import type { Redis } from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -269,7 +268,7 @@ export class AuthService {
     const rawKey = randomBytes(40).toString('hex');
     const plainKey = `fpe_${rawKey}`;
     const prefix = plainKey.substring(0, 8);
-    const keyHash = createHash('sha256').update(plainKey).digest('hex');
+    const keyHash = this.hashApiKey(plainKey);
 
     const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
 
@@ -383,10 +382,19 @@ export class AuthService {
 
   /**
    * Check if a JWT token has been revoked.
+   * If Redis is unavailable, fail open (allow the request) to avoid
+   * a total outage when Redis is down. Log the error for monitoring.
    */
   async isTokenRevoked(jti: string): Promise<boolean> {
-    const result = await this.redis.get(`jwt_blacklist:${jti}`);
-    return result !== null;
+    try {
+      const result = await this.redis.get(`jwt_blacklist:${jti}`);
+      return result !== null;
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Redis unavailable for token revocation check (jti=${jti}): ${msg}`);
+      // Fail open: allow the request rather than blocking all authenticated traffic
+      return false;
+    }
   }
 
   // ─── Login Lockout ──────────────────────────────────────────────────
@@ -434,6 +442,8 @@ export class AuthService {
     const accessJti = randomBytes(16).toString('hex');
     const refreshJti = randomBytes(16).toString('hex');
 
+    const audience = 'facturape-api';
+
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(
         {
@@ -442,6 +452,7 @@ export class AuthService {
           companyId: payload.companyId,
           role: payload.role,
           jti: accessJti,
+          aud: audience,
         },
         {
           secret: this.config.get<string>('jwt.secret'),
@@ -455,6 +466,7 @@ export class AuthService {
           companyId: payload.companyId,
           role: payload.role,
           jti: refreshJti,
+          aud: audience,
         },
         {
           secret: this.config.get<string>('jwt.refreshSecret'),
@@ -492,5 +504,15 @@ export class AuthService {
     const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
     const keyBuffer = Buffer.from(key, 'hex');
     return timingSafeEqual(derivedKey, keyBuffer);
+  }
+
+  /**
+   * Hash an API key using HMAC-SHA256 with the application secret.
+   * Uses HMAC instead of plain SHA-256 to prevent rainbow table attacks
+   * and bind the hash to this specific application.
+   */
+  hashApiKey(apiKey: string): string {
+    const secret = this.config.get<string>('jwt.secret', '');
+    return createHmac('sha256', secret).update(apiKey).digest('hex');
   }
 }

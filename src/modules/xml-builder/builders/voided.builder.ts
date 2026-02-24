@@ -102,8 +102,8 @@ export class VoidedBuilder extends BaseXmlBuilder {
     // Document series
     line.ele('sac:DocumentSerialID').txt(item.serie).up();
 
-    // Document number
-    line.ele('sac:DocumentNumberID').txt(item.correlativo.toString()).up();
+    // Document number (zero-padded to 8 digits per SUNAT requirements)
+    line.ele('sac:DocumentNumberID').txt(String(item.correlativo).padStart(8, '0')).up();
 
     // Void reason
     line.ele('sac:VoidReasonDescription').txt(item.motivo).up();

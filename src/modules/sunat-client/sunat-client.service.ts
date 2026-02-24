@@ -509,23 +509,35 @@ export class SunatClientService {
    * node-soap throws errors with a `root` property containing the parsed
    * SOAP fault. We extract the fault code and string for diagnostics.
    */
+  /**
+   * Normalize a SOAP fault value that may be a string or an array.
+   * SUNAT sometimes returns faultstring as an array of strings.
+   */
+  private normalizeFaultValue(value: unknown): string | undefined {
+    if (value == null) return undefined;
+    if (Array.isArray(value)) return value.map(String).join('; ');
+    return String(value);
+  }
+
   private handleSoapError(
     operation: string,
     fileName: string,
     error: unknown,
   ): SunatSendResult {
     const soapError = error as Record<string, any>;
-    const faultCode = soapError?.root?.Envelope?.Body?.Fault?.faultcode;
-    const faultString = soapError?.root?.Envelope?.Body?.Fault?.faultstring;
+    const fault = soapError?.root?.Envelope?.Body?.Fault;
+    const faultCode = this.normalizeFaultValue(fault?.faultcode);
+    const faultString = this.normalizeFaultValue(fault?.faultstring);
 
     // Some SOAP faults include a SUNAT-specific code in the detail.
     // SUNAT uses different field names across error scenarios, so check all known variants.
-    const detail = soapError?.root?.Envelope?.Body?.Fault?.detail;
+    const detail = fault?.detail;
     const sunatCode = detail?.code ?? detail?.codigoError ?? detail?.codigoRespuesta ?? undefined;
-    const sunatMessage = detail?.message ?? detail?.mensajeError ?? detail?.description ?? faultString ?? 'Unknown SOAP error';
+    const sunatMessage = this.normalizeFaultValue(
+      detail?.message ?? detail?.mensajeError ?? detail?.description ?? faultString,
+    ) ?? 'Unknown SOAP error';
 
     if (faultCode || faultString) {
-      const fault = soapError?.root?.Envelope?.Body?.Fault;
       this.logger.error(
         `${operation}: SOAP fault for ${fileName} — code=${faultCode}, message=${faultString}`,
       );
@@ -536,9 +548,9 @@ export class SunatClientService {
       return {
         success: false,
         code: sunatCode?.toString(),
-        message: sunatMessage?.toString(),
-        rawFaultCode: faultCode?.toString(),
-        rawFaultString: faultString?.toString(),
+        message: sunatMessage,
+        rawFaultCode: faultCode,
+        rawFaultString: faultString,
       };
     }
 

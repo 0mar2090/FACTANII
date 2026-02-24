@@ -1,21 +1,24 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { createHash } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { AuthService } from '../auth.service.js';
 import type { RequestUser } from '../../../common/interfaces/index.js';
 
 /**
- * ApiKeyService — Validates API keys by hashing them with SHA-256
+ * ApiKeyService — Validates API keys by hashing them with HMAC-SHA256
  * and looking up the hash in the database.
  *
  * This is NOT a Passport strategy. It is a standalone service used by
  * the ApiKeyGuard to validate `x-api-key` headers.
  *
- * API keys are stored as SHA-256 hashes in the database. The plain key
+ * API keys are stored as HMAC-SHA256 hashes in the database. The plain key
  * is only shown once at creation time and never stored.
  */
 @Injectable()
 export class ApiKeyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly authService: AuthService,
+  ) {}
 
   /**
    * Validate an API key and return the associated user context.
@@ -25,7 +28,7 @@ export class ApiKeyService {
    * @throws UnauthorizedException if the key is invalid, expired, or the user/company is inactive
    */
   async validateApiKey(apiKey: string): Promise<RequestUser> {
-    const keyHash = createHash('sha256').update(apiKey).digest('hex');
+    const keyHash = this.authService.hashApiKey(apiKey);
 
     const key = await this.prisma.client.apiKey.findUnique({
       where: { keyHash },

@@ -255,33 +255,37 @@ export class SunatGreClientService {
     solUser: string,
     solPass: string,
     isBeta: boolean,
+    clientId?: string,
+    clientSecret?: string,
   ): Promise<GreSendResult> {
     const endpoints = this.resolveEndpoints(isBeta);
 
     const numero = String(correlativo).padStart(8, '0');
     const docId = `${ruc}-09-${serie}-${numero}`;
+    const cacheKey = `${ruc}:${solUser}`;
 
     this.logger.log(
       `anularGuia: docId=${docId}, env=${isBeta ? 'beta' : 'prod'}`,
     );
 
     try {
-      const token = await this.getToken(ruc, solUser, solPass, isBeta);
-
       const url = `${endpoints.api}/comprobantes/${docId}`;
       const body = {
         codMotivo: '01',
         desMensaje: motivo,
       };
 
-      const response = await axios.put(url, body, {
-        headers: {
-          'Authorization': `Bearer ${token.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30_000,
-        validateStatus: () => true,
-      });
+      const response = await this.withTokenRetry(
+        async (accessToken) => axios.put(url, body, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30_000,
+          validateStatus: () => true,
+        }),
+        cacheKey, ruc, solUser, solPass, isBeta, clientId, clientSecret,
+      );
 
       if (response.status >= 200 && response.status < 300) {
         this.logger.log(`anularGuia: success for ${docId}`);

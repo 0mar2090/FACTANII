@@ -21,6 +21,8 @@ export interface JwtPayload {
   email: string;
   companyId?: string;
   role?: string;
+  jti?: string;       // JWT ID for token revocation
+  aud?: string;       // Audience claim
   iat?: number;
   exp?: number;
 }
