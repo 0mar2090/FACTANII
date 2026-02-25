@@ -88,6 +88,14 @@ export function buildTicketTemplate(data: PdfInvoiceData): TDocumentDefinitions 
     igv,
     isc,
     icbper,
+    opGratuitas,
+    opExportacion,
+    opIvap,
+    igvIvap,
+    igvRate,
+    codigoDetraccion,
+    porcentajeDetraccion,
+    montoDetraccion,
     totalVenta,
     montoEnLetras,
     xmlHash,
@@ -294,9 +302,22 @@ export function buildTicketTemplate(data: PdfInvoiceData): TDocumentDefinitions 
       { text: fmtCurrency(monedaSimbolo, opInafectas), fontSize: 8, alignment: 'right' as const },
     ]);
   }
-  if (igv > 0) {
+  if (opGratuitas && opGratuitas > 0) {
     totalsRows.push([
-      { text: 'IGV 18%:', fontSize: 8, alignment: 'left' as const },
+      { text: 'Op. Gratuitas:', fontSize: 8, alignment: 'left' as const },
+      { text: fmtCurrency(monedaSimbolo, opGratuitas), fontSize: 8, alignment: 'right' as const },
+    ]);
+  }
+  if (opExportacion && opExportacion > 0) {
+    totalsRows.push([
+      { text: 'Op. Exportación:', fontSize: 8, alignment: 'left' as const },
+      { text: fmtCurrency(monedaSimbolo, opExportacion), fontSize: 8, alignment: 'right' as const },
+    ]);
+  }
+  if (igv > 0) {
+    const igvPct = igvRate ? `${(igvRate * 100).toFixed(igvRate * 100 % 1 === 0 ? 0 : 1)}%` : '18%';
+    totalsRows.push([
+      { text: `IGV ${igvPct}:`, fontSize: 8, alignment: 'left' as const },
       { text: fmtCurrency(monedaSimbolo, igv), fontSize: 8, alignment: 'right' as const },
     ]);
   }
@@ -310,6 +331,25 @@ export function buildTicketTemplate(data: PdfInvoiceData): TDocumentDefinitions 
     totalsRows.push([
       { text: 'ICBPER:', fontSize: 8, alignment: 'left' as const },
       { text: fmtCurrency(monedaSimbolo, icbper), fontSize: 8, alignment: 'right' as const },
+    ]);
+  }
+  if (opIvap && opIvap > 0) {
+    totalsRows.push([
+      { text: 'Op. IVAP:', fontSize: 8, alignment: 'left' as const },
+      { text: fmtCurrency(monedaSimbolo, opIvap), fontSize: 8, alignment: 'right' as const },
+    ]);
+  }
+  if (igvIvap && igvIvap > 0) {
+    totalsRows.push([
+      { text: 'IVAP 4%:', fontSize: 8, alignment: 'left' as const },
+      { text: fmtCurrency(monedaSimbolo, igvIvap), fontSize: 8, alignment: 'right' as const },
+    ]);
+  }
+  if (montoDetraccion && montoDetraccion > 0) {
+    const detPct = porcentajeDetraccion ? `${(porcentajeDetraccion * 100).toFixed(0)}%` : '';
+    totalsRows.push([
+      { text: `Detracc.${detPct ? ` ${detPct}` : ''}:`, fontSize: 8, alignment: 'left' as const },
+      { text: `-${fmtCurrency(monedaSimbolo, montoDetraccion)}`, fontSize: 8, alignment: 'right' as const },
     ]);
   }
 

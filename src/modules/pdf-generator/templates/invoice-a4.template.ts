@@ -76,6 +76,14 @@ export function buildA4Template(data: PdfInvoiceData): TDocumentDefinitions {
     igv,
     isc,
     icbper,
+    opGratuitas,
+    opExportacion,
+    opIvap,
+    igvIvap,
+    igvRate,
+    codigoDetraccion,
+    porcentajeDetraccion,
+    montoDetraccion,
     totalVenta,
     montoEnLetras,
     xmlHash,
@@ -307,9 +315,22 @@ export function buildA4Template(data: PdfInvoiceData): TDocumentDefinitions {
       { text: fmtCurrency(monedaSimbolo, opInafectas), style: 'totalsValue' },
     ]);
   }
-  if (igv > 0) {
+  if (opGratuitas && opGratuitas > 0) {
     totalsRows.push([
-      { text: 'IGV 18%:', style: 'totalsLabel' },
+      { text: 'Op. Gratuitas:', style: 'totalsLabel' },
+      { text: fmtCurrency(monedaSimbolo, opGratuitas), style: 'totalsValue' },
+    ]);
+  }
+  if (opExportacion && opExportacion > 0) {
+    totalsRows.push([
+      { text: 'Op. Exportación:', style: 'totalsLabel' },
+      { text: fmtCurrency(monedaSimbolo, opExportacion), style: 'totalsValue' },
+    ]);
+  }
+  if (igv > 0) {
+    const igvPct = igvRate ? `${(igvRate * 100).toFixed(igvRate * 100 % 1 === 0 ? 0 : 1)}%` : '18%';
+    totalsRows.push([
+      { text: `IGV ${igvPct}:`, style: 'totalsLabel' },
       { text: fmtCurrency(monedaSimbolo, igv), style: 'totalsValue' },
     ]);
   }
@@ -323,6 +344,25 @@ export function buildA4Template(data: PdfInvoiceData): TDocumentDefinitions {
     totalsRows.push([
       { text: 'ICBPER:', style: 'totalsLabel' },
       { text: fmtCurrency(monedaSimbolo, icbper), style: 'totalsValue' },
+    ]);
+  }
+  if (opIvap && opIvap > 0) {
+    totalsRows.push([
+      { text: 'Op. IVAP:', style: 'totalsLabel' },
+      { text: fmtCurrency(monedaSimbolo, opIvap), style: 'totalsValue' },
+    ]);
+  }
+  if (igvIvap && igvIvap > 0) {
+    totalsRows.push([
+      { text: 'IVAP 4%:', style: 'totalsLabel' },
+      { text: fmtCurrency(monedaSimbolo, igvIvap), style: 'totalsValue' },
+    ]);
+  }
+  if (montoDetraccion && montoDetraccion > 0) {
+    const detPct = porcentajeDetraccion ? `${(porcentajeDetraccion * 100).toFixed(0)}%` : '';
+    totalsRows.push([
+      { text: `Detracción${detPct ? ` ${detPct}` : ''}${codigoDetraccion ? ` (${codigoDetraccion})` : ''}:`, style: 'totalsLabel' },
+      { text: `-${fmtCurrency(monedaSimbolo, montoDetraccion)}`, style: 'totalsValue' },
     ]);
   }
 

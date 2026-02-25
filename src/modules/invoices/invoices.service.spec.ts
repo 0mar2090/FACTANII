@@ -140,6 +140,9 @@ function createMocks() {
         count: vi.fn(),
         update: vi.fn(),
       },
+      webhook: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       $queryRawUnsafe: vi.fn(),
     },
   };

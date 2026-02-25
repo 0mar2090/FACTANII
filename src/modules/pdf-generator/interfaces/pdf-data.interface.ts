@@ -49,6 +49,17 @@ export interface PdfInvoiceData {
   igv: number;
   isc: number;
   icbper: number;
+  opGratuitas?: number;
+  opExportacion?: number;
+  opIvap?: number;
+  igvIvap?: number;
+  /** Effective IGV rate for label display: 0.18, 0.105, or 0.04 (IVAP) */
+  igvRate?: number;
+  /** Detracción fields */
+  codigoDetraccion?: string;
+  porcentajeDetraccion?: number;
+  montoDetraccion?: number;
+  cuentaDetraccion?: string;
   totalVenta: number;
   /** Amount in words (Spanish), e.g. "MIL QUINIENTOS CON 50/100 SOLES" */
   montoEnLetras: string;

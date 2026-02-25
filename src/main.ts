@@ -126,6 +126,19 @@ async function bootstrap() {
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
+
+    // Add common error responses to all operations
+    for (const pathItem of Object.values(document.paths ?? {})) {
+      for (const operation of Object.values(pathItem ?? {})) {
+        if (typeof operation === 'object' && operation !== null && 'responses' in operation) {
+          const responses = (operation as any).responses as Record<string, any>;
+          responses['401'] ??= { description: 'Unauthorized — JWT token or API key missing/invalid' };
+          responses['403'] ??= { description: 'Forbidden — insufficient permissions or role' };
+          responses['429'] ??= { description: 'Too Many Requests — rate limit exceeded' };
+        }
+      }
+    }
+
     SwaggerModule.setup('docs', app, document);
   }
 
