@@ -239,7 +239,7 @@ export class InvoiceSendProcessor extends WorkerHost {
     // 1. Webhook notification
     const eventMap: Record<string, WebhookEvent> = {
       ACCEPTED: 'invoice.accepted',
-      OBSERVED: 'invoice.accepted',
+      OBSERVED: 'invoice.observed',
       REJECTED: 'invoice.rejected',
     };
     const event = eventMap[status];

@@ -368,11 +368,11 @@ describe('InvoiceSendProcessor', () => {
         }),
       );
 
-      // Webhook should use 'invoice.accepted' for OBSERVED too
+      // Webhook should use 'invoice.observed' for OBSERVED status
       expect(mocks.webhooks.notifyInvoiceStatus).toHaveBeenCalledWith(
         'comp-1',
         expect.objectContaining({ status: 'OBSERVED' }),
-        'invoice.accepted',
+        'invoice.observed',
       );
 
       // Email should still be queued for OBSERVED

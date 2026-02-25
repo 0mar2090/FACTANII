@@ -16,31 +16,97 @@ export type TransactionClient = Omit<
 >;
 
 /**
+ * Models with a `companyId` field that must be tenant-scoped.
+ * All read/update/delete operations on these models will have
+ * `companyId` automatically injected from CLS context.
+ */
+const TENANT_SCOPED_MODELS = new Set([
+  'Invoice',
+  'InvoiceItem',
+  'Certificate',
+  'Webhook',
+  'Subscription',
+  'ApiKey',
+]);
+
+/**
+ * Operations where we inject `companyId` into the `where` clause.
+ * Write operations (create/createMany) are excluded because services
+ * set companyId explicitly from the JWT token.
+ */
+const FILTERABLE_OPS = new Set([
+  'findFirst',
+  'findFirstOrThrow',
+  'findMany',
+  'findUnique',
+  'findUniqueOrThrow',
+  'count',
+  'aggregate',
+  'groupBy',
+  'update',
+  'updateMany',
+  'upsert',
+  'delete',
+  'deleteMany',
+]);
+
+/**
+ * The companyId field name for each tenant-scoped model.
+ * Most models use 'companyId' directly; InvoiceItem uses 'invoice.companyId'
+ * via a nested relation filter.
+ */
+const TENANT_FIELD: Record<string, string> = {
+  Invoice: 'companyId',
+  Certificate: 'companyId',
+  Webhook: 'companyId',
+  Subscription: 'companyId',
+  ApiKey: 'companyId',
+};
+
+/**
  * PrismaService — Wraps Prisma 7 PrismaClient with PrismaPg driver adapter.
  *
  * Features:
  * - Automatic connect/disconnect on module lifecycle
- * - Tenant-scoped transactions via CLS (AsyncLocalStorage) for RLS
+ * - **Automatic tenant filtering** via Prisma Client Extension:
+ *   All queries on tenant-scoped models (Invoice, Certificate, Webhook,
+ *   Subscription, ApiKey) automatically get a `companyId` filter injected
+ *   from the CLS (AsyncLocalStorage) context set by TenantGuard.
+ * - Tenant-scoped transactions via `withTenant()` for PostgreSQL RLS
  * - SQL injection-safe tenant context using parameterized queries
  *
+ * How it works:
+ *   1. TenantGuard sets `tenantId` in CLS from the JWT/API key
+ *   2. Every query on a tenant-scoped model reads CLS at execution time
+ *   3. If tenantId exists, `companyId = tenantId` is added to the WHERE clause
+ *   4. If no tenantId (e.g., @Public, @SkipTenant, queue processors), the
+ *      query passes through unmodified
+ *
  * Usage in services:
- *   // Direct access (no RLS filtering):
+ *   // Tenant-scoped automatically (no code changes needed):
+ *   this.prisma.client.invoice.findMany()
+ *   // → WHERE companyId = <cls-tenantId> AND ...
+ *
+ *   // No tenant context (@Public/@SkipTenant/queues) — passes through:
  *   this.prisma.client.user.findMany()
  *
- *   // Tenant-scoped transaction (sets SET LOCAL tenancy.tenant_id for RLS):
+ *   // Explicit unscoped access (bypasses tenant filter):
+ *   this.prisma.unscopedClient.invoice.findMany()
+ *
+ *   // PostgreSQL RLS transaction (SET LOCAL tenancy.tenant_id):
  *   this.prisma.withTenant(async (tx) => {
  *     return tx.invoice.findMany();
  *   })
- *
- *   // Or explicitly pass a tenantId:
- *   this.prisma.withTenant(async (tx) => {
- *     return tx.invoice.findMany();
- *   }, 'specific-tenant-id')
  */
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
-  public readonly client: PrismaClient;
+
+  /** Base Prisma client — no tenant filtering. Use `unscopedClient` for explicit bypass. */
+  private readonly _baseClient: PrismaClient;
+
+  /** Extended Prisma client with automatic tenant filtering via CLS. */
+  private readonly _tenantClient: PrismaClient;
 
   constructor(
     private readonly cls: ClsService,
@@ -53,7 +119,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
     const adapter = new PrismaPg({ connectionString });
 
-    this.client = new PrismaClient({
+    this._baseClient = new PrismaClient({
       adapter,
       log:
         this.config.get<string>('NODE_ENV') === 'development'
@@ -67,15 +133,65 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
               { emit: 'stdout', level: 'error' },
             ],
     });
+
+    // Create tenant-aware extended client.
+    // The CLS lookup happens at QUERY TIME (inside the callback), not at
+    // construction time, so each request gets its own tenant context.
+    const clsRef = this.cls;
+    this._tenantClient = this._baseClient.$extends({
+      query: {
+        $allOperations({ model, operation, args, query }) {
+          const tenantId = clsRef.get('tenantId');
+
+          // Pass through if: no tenant context, non-tenant model, or non-filterable op
+          if (!tenantId || !model || !TENANT_SCOPED_MODELS.has(model) || !FILTERABLE_OPS.has(operation)) {
+            return query(args);
+          }
+
+          // Skip InvoiceItem — it's always accessed via Invoice relation (include/nested)
+          // and doesn't have a direct companyId field
+          const field = TENANT_FIELD[model];
+          if (!field) {
+            return query(args);
+          }
+
+          // Inject companyId filter into the where clause
+          const typedArgs = args as Record<string, any>;
+          if (typedArgs.where !== undefined) {
+            typedArgs.where = { ...typedArgs.where, [field]: tenantId };
+          } else if (operation !== 'aggregate' && operation !== 'groupBy') {
+            typedArgs.where = { [field]: tenantId };
+          }
+
+          return query(typedArgs);
+        },
+      },
+    }) as unknown as PrismaClient;
+  }
+
+  /**
+   * The default client — includes automatic tenant filtering.
+   * All existing `this.prisma.client.*` calls are now tenant-scoped.
+   */
+  get client(): PrismaClient {
+    return this._tenantClient;
+  }
+
+  /**
+   * Unscoped client — bypasses tenant filtering.
+   * Use for cross-tenant operations, auth lookups, health checks, etc.
+   */
+  get unscopedClient(): PrismaClient {
+    return this._baseClient;
   }
 
   async onModuleInit(): Promise<void> {
-    await this.client.$connect();
-    this.logger.log('Prisma connected to PostgreSQL via PrismaPg adapter');
+    await this._baseClient.$connect();
+    this.logger.log('Prisma connected to PostgreSQL via PrismaPg adapter (tenant extension active)');
 
     // Log slow queries in development
     if (this.config.get<string>('NODE_ENV') === 'development') {
-      (this.client as any).$on?.('query', (event: any) => {
+      (this._baseClient as any).$on?.('query', (event: any) => {
         if (event.duration > 200) {
           this.logger.warn(
             `Slow query (${event.duration}ms): ${event.query}`,
@@ -86,7 +202,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.client.$disconnect();
+    await this._baseClient.$disconnect();
     this.logger.log('Prisma disconnected from PostgreSQL');
   }
 
@@ -116,7 +232,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    return this.client.$transaction(async (tx) => {
+    return this._baseClient.$transaction(async (tx) => {
       // Use parameterized query to prevent SQL injection
       await (tx as any).$executeRawUnsafe(
         `SET LOCAL tenancy.tenant_id = $1`,
@@ -140,7 +256,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   async withTransaction<T>(
     fn: (tx: TransactionClient) => Promise<T>,
   ): Promise<T> {
-    return this.client.$transaction(async (tx) => {
+    return this._baseClient.$transaction(async (tx) => {
       return fn(tx as unknown as TransactionClient);
     });
   }
@@ -159,7 +275,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    */
   async isHealthy(): Promise<boolean> {
     try {
-      await this.client.$executeRawUnsafe('SELECT 1');
+      await this._baseClient.$executeRawUnsafe('SELECT 1');
       return true;
     } catch {
       return false;

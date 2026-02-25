@@ -1227,7 +1227,7 @@ export class InvoicesService {
         tipoDoc,
         serie,
         correlativo,
-        tipoOperacion: tipoDoc,
+        tipoOperacion: '1001', // Cat 51: Retención
         fechaEmision: new Date(dto.fechaEmision),
         clienteTipoDoc: dto.proveedorTipoDoc,
         clienteNumDoc: dto.proveedorNumDoc,
@@ -1337,7 +1337,7 @@ export class InvoicesService {
         tipoDoc,
         serie,
         correlativo,
-        tipoOperacion: tipoDoc,
+        tipoOperacion: '2001', // Cat 51: Percepción
         fechaEmision: new Date(dto.fechaEmision),
         clienteTipoDoc: dto.clienteTipoDoc,
         clienteNumDoc: dto.clienteNumDoc,
