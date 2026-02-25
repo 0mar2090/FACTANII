@@ -25,7 +25,7 @@
 - **Uploads:** @fastify/multipart 9.x (5MB limit), @fastify/static 8.x
 - **Security:** @fastify/helmet 12.x (CSP environment-aware)
 - **Storage:** @aws-sdk/client-s3 3.x (preparado para almacenamiento S3)
-- **Testing:** vitest 3.x + supertest 7.x (~570 tests, 29 spec files + 4 e2e files)
+- **Testing:** vitest 3.x + supertest 7.x (~709 tests, 33 spec files + 4 e2e files)
 - **Build tooling:** TypeScript 5.7, SWC (e2e via unplugin-swc), tsx (seed)
 - **Package Manager:** pnpm 9+ (`"pnpm": ">=9.0.0"`)
 - **Otros:** dotenv 17.x, reflect-metadata 0.2, rxjs 7.8

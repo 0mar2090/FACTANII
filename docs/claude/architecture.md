@@ -199,16 +199,16 @@ MOTIVO_TRASLADO         Cat 20: 01-04, 06-09, 11, 13-14, 17-19
 REGIMEN_PERCEPCION      Cat 22: 01 (2%), 02 (1%), 03 (0.5%)
 REGIMEN_RETENCION       Cat 23: 01 (3%), 02 (6%)
 LEYENDA                 Cat 52: 1000, 1002, 2000, 2001, 2006 (detracción), 2007 (IVAP), 2010
-CODIGO_DETRACCION       Cat 54: 34 códigos organizados por Anexo I/II/III (completo con DETRACCION_RATES)
+CODIGO_DETRACCION       Cat 54: 42 códigos organizados por Anexo I/II/III (completo con DETRACCION_RATES)
 MEDIO_PAGO              Cat 59: métodos de pago (001-999)
 CODIGO_PRODUCTO_SUNAT   Cat 62: categorías UNSPSC + isValidProductCode()
 
-IGV_RATE = 0.18           IGV_RESTAURANT_RATE = 0.105 (MYPEs Ley 32357, ene 2026)
+IGV_RATE = 0.18           IGV_RESTAURANT_RATE = 0.10 (MYPEs Ley 31556, 8% IGV + 2% IPM)
 IVAP_RATE = 0.04           ICBPER_RATE = 0.50           UIT_2026 = 5500
 MAX_DAYS_BY_DOC_TYPE      { '01':3, '03':7, '07':3, '08':3, '09':7, '20':9, '40':9 }
 RETENCION_RATES           { '01':0.03, '02':0.06 }
 PERCEPCION_RATES          { '01':0.02, '02':0.01, '03':0.005 }
-DETRACCION_RATES          30 códigos con tasa específica (Cat 54)
+DETRACCION_RATES          42 códigos con tasa específica (Cat 54)
 DETRACCION_DEFAULT_RATE   = 0.12
 DETRACCION_THRESHOLD      = 700 (S/)
 DETRACCION_THRESHOLD_TRANSPORT = 400 (S/)

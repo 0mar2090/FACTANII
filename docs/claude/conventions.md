@@ -37,7 +37,7 @@
 - **CRE/CPE (20/40)**: SOAP pero endpoint `RETENTION` (diferente al de facturas)
 - Tasa IGV: 18% (validar con tolerancia ±1 según reglas feb 2026)
 - Tasa IVAP: 4% (Arroz Pilado, tipo afectación 17)
-- IGV Restaurantes MYPEs: 10.5% (Ley 32357)
+- IGV Restaurantes MYPEs: 10% (Ley 31556, 8% IGV + 2% IPM)
 - Firma: SHA-256 + RSA (NO SHA-1)
 - ZIP name: `{RUC}-{TIPO}-{SERIE}-{CORRELATIVO}.zip`
 - Envío máximo según MAX_DAYS_BY_DOC_TYPE
@@ -110,9 +110,9 @@ rm -f tsconfig.tsbuildinfo && npx tsc --build
 
 ## Tests
 
-### Archivos de test (29 spec + 4 e2e = 33 archivos, ~570 tests)
+### Archivos de test (33 spec + 4 e2e = 37 archivos, ~709 tests)
 
-**Utilidades comunes (12 archivos):**
+**Utilidades comunes (12 archivos, ~99 tests):**
 - `src/common/utils/__tests__/tax-calculator-detraccion.spec.ts`
 - `src/common/utils/__tests__/tax-calculator-export.spec.ts`
 - `src/common/utils/__tests__/tax-calculator-gratuitas.spec.ts`
@@ -126,7 +126,7 @@ rm -f tsconfig.tsbuildinfo && npx tsc --build
 - `src/common/utils/ruc-validator.spec.ts`
 - `src/common/utils/zip.spec.ts`
 
-**XML Builders (6 archivos):**
+**XML Builders (6 archivos, ~199 tests):**
 - `src/modules/xml-builder/builders/__tests__/credit-debit-note.spec.ts`
 - `src/modules/xml-builder/builders/__tests__/invoice-builder-features.spec.ts`
 - `src/modules/xml-builder/builders/__tests__/sunat-beta-integration.spec.ts`
@@ -134,22 +134,26 @@ rm -f tsconfig.tsbuildinfo && npx tsc --build
 - `src/modules/xml-builder/builders/retention-perception.spec.ts`
 - `src/modules/xml-builder/builders/xml-builders.spec.ts`
 
-**XML Validators (5 archivos):**
+**XML Validators (5 archivos, ~144 tests):**
 - `src/modules/xml-builder/validators/__tests__/xml-validator-complete.spec.ts`
 - `src/modules/xml-builder/validators/__tests__/xml-validator-deep.spec.ts`
 - `src/modules/xml-builder/validators/__tests__/xml-validator-retention-perception.spec.ts`
 - `src/modules/xml-builder/validators/xml-validator.spec.ts`
 - `src/modules/xml-builder/validators/xml-validator-new-docs.spec.ts`
 
-**Servicios de módulos (6 archivos):**
+**Servicios de módulos (10 archivos, ~235 tests):**
+- `src/modules/auth/auth.service.spec.ts`
+- `src/modules/billing/billing.service.spec.ts`
+- `src/modules/companies/companies.service.spec.ts`
 - `src/modules/invoices/invoices.service.spec.ts`
 - `src/modules/pdf-generator/pdf-generator.service.spec.ts`
 - `src/modules/sunat-client/sunat-client.spec.ts`
 - `src/modules/xml-signer/xml-signer.service.spec.ts`
 - `src/modules/cdr-processor/cdr-processor.service.spec.ts`
+- `src/modules/prisma/tenant-isolation.spec.ts`
 - `src/modules/queues/processors/invoice-send.spec.ts`
 
-**E2E (4 archivos en test/):**
+**E2E (4 archivos en test/, 32 tests):**
 - `test/auth.e2e-spec.ts`
 - `test/consultations.e2e-spec.ts`
 - `test/health.e2e-spec.ts`
