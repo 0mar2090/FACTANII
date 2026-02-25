@@ -37,17 +37,35 @@
 
 ### Documentos soportados
 
-| Codigo | Documento                    | Protocolo      | Estado |
-|--------|------------------------------|----------------|--------|
-| `01`   | Factura Electronica          | SOAP sendBill  | OK     |
-| `03`   | Boleta de Venta              | SOAP sendBill  | OK     |
-| `07`   | Nota de Credito              | SOAP sendBill  | OK     |
-| `08`   | Nota de Debito               | SOAP sendBill  | OK     |
-| `09`   | Guia de Remision (GRE)       | REST API OAuth2| OK     |
-| `20`   | Comprobante de Retencion     | SOAP sendBill  | OK     |
-| `40`   | Comprobante de Percepcion    | SOAP sendBill  | OK     |
-| `RC`   | Resumen Diario               | SOAP sendSummary | OK   |
-| `RA`   | Comunicacion de Baja         | SOAP sendSummary | OK   |
+| Codigo | Documento                    | Protocolo      | Endpoint SUNAT     | Estado |
+|--------|------------------------------|----------------|---------------------|--------|
+| `01`   | Factura Electronica          | SOAP sendBill  | Invoice             | OK     |
+| `03`   | Boleta de Venta              | SOAP sendBill  | Invoice             | OK     |
+| `07`   | Nota de Credito              | SOAP sendBill  | Invoice             | OK     |
+| `08`   | Nota de Debito               | SOAP sendBill  | Invoice             | OK     |
+| `09`   | Guia de Remision (GRE)       | REST API OAuth2| GRE API             | OK     |
+| `20`   | Comprobante de Retencion     | SOAP sendBill  | Retention           | OK     |
+| `40`   | Comprobante de Percepcion    | SOAP sendBill  | Retention           | OK     |
+| `RC`   | Resumen Diario               | SOAP sendSummary | Invoice           | OK     |
+| `RA`   | Comunicacion de Baja         | SOAP sendSummary | Invoice           | OK     |
+
+### Estados del comprobante (InvoiceStatus)
+
+El ciclo de vida de un comprobante se gestiona con un enum PostgreSQL:
+
+```
+DRAFT → PENDING → QUEUED → SENDING → ACCEPTED / REJECTED / OBSERVED
+```
+
+| Estado     | Descripcion                                                |
+|------------|------------------------------------------------------------|
+| `DRAFT`    | Creado, aun no enviado                                     |
+| `PENDING`  | Listo para envio                                           |
+| `QUEUED`   | Encolado en BullMQ                                         |
+| `SENDING`  | En proceso de envio a SUNAT                                |
+| `ACCEPTED` | Aceptado por SUNAT (codigo 0)                              |
+| `REJECTED` | Rechazado por SUNAT (error de validacion)                  |
+| `OBSERVED` | Aceptado con observaciones (codigo 0 + notas informativas) |
 
 ### Capacidades principales
 
@@ -56,7 +74,7 @@
 - Envio SOAP sincrono (`sendBill`) y asincrono (`sendSummary` + polling `getStatus`)
 - Envio REST API con OAuth2 para Guia de Remision Electronica (GRE)
 - Procesamiento de CDR (Constancia de Recepcion) automatico
-- Generacion de PDF en formatos A4 y ticket 80mm (pdfmake + QR)
+- Generacion de PDF en formatos A4 y ticket 80mm con tasa IGV dinamica
 - Emision masiva (batch) de hasta 50 comprobantes por request
 - Emails transaccionales con adjuntos XML/PDF (Resend)
 - Webhooks salientes con HMAC-SHA256 para notificaciones en tiempo real
@@ -72,7 +90,8 @@
 - Consultas gratuitas: RUC, DNI, tipo de cambio, validar CPE
 - Validacion pre-envio contra reglas SUNAT por tipo de documento
 - Correlation ID (`X-Request-ID`) en todas las respuestas
-- Health checks: base de datos, Redis, memoria heap, disco
+- Health checks: base de datos, Redis, memoria heap (256MB), disco (90%)
+- Swagger/OpenAPI con respuestas globales 401/403/429
 
 ---
 
@@ -84,7 +103,7 @@
 | Framework       | NestJS 11.1 + Fastify 5.7                        |
 | ORM             | Prisma 7.4 (driver adapter `@prisma/adapter-pg`) |
 | Base de datos   | PostgreSQL 16 + Row-Level Security               |
-| Colas           | BullMQ 5.66 + Redis 7                            |
+| Colas           | BullMQ 5.66 + Redis 7 (ioredis 5.6)              |
 | XML             | xmlbuilder2 4 (UBL 2.1) + fast-xml-parser 5 (CDR)|
 | Firma digital   | xml-crypto 6 (XMLDSig) + node-forge 1.3 (PFX)   |
 | SOAP            | node-soap 1.1 (WS-Security) + WSDLs locales     |
@@ -96,9 +115,11 @@
 | Validacion      | class-validator 0.14 + class-transformer 0.5     |
 | Rate Limiting   | @nestjs/throttler 6.5 (3 tiers configurables)    |
 | Multi-tenancy   | nestjs-cls 4.5 (AsyncLocalStorage) + PG RLS      |
+| Compresion      | archiver 7 (ZIP SUNAT) + adm-zip 0.5 (CDR)      |
+| Cifrado         | crypto nativo Node.js (AES-256-GCM)              |
 | Uploads         | @fastify/multipart 9 (5MB limit)                 |
 | Docs            | @nestjs/swagger 11 + @fastify/swagger 9          |
-| Testing         | Vitest 3 + Supertest 7 (~566 tests, 28 spec files) |
+| Testing         | Vitest 3 + Supertest 7 (~570 tests, 29 spec + 4 e2e) |
 | Monitoreo       | Sentry 10 + Health Checks (@nestjs/terminus 11)  |
 | Package Manager | pnpm 9+                                          |
 
@@ -120,7 +141,8 @@
     │       │   ┌──────────────────────────────────────────────┐          │
     │       │   │          SUNAT Web Services                  │          │
     │       │   │                                              │          │
-    │       │   │  SOAP sendBill ──────── 01,03,07,08,20,40   │          │
+    │       │   │  SOAP sendBill (Invoice) ─── 01,03,07,08    │          │
+    │       │   │  SOAP sendBill (Retention) ── 20,40         │          │
     │       │   │  SOAP sendSummary ────── RC, RA → ticket    │          │
     │       │   │  REST OAuth2 + API ────── 09 (GRE) → ticket │          │
     │       │   │  SOAP getStatus ──────── poll tickets       │          │
@@ -147,6 +169,18 @@
     │  └────────────────────────────────────────────────────────────┘    │
     └──────────────────────────────────────────────────────────────────────┘
 ```
+
+### Modulos registrados (20 total)
+
+**Fase 1 — Autenticacion y tenancy:** AuthModule, UsersModule, CompaniesModule, CertificatesModule
+
+**Fase 2 — Core XML/Facturacion:** XmlBuilderModule, XmlSignerModule, SunatClientModule, CdrProcessorModule, InvoicesModule
+
+**Fase 4 — Procesamiento asincrono:** QueuesModule, PdfGeneratorModule, ConsultationsModule, WebhooksModule, BillingModule, NotificationsModule
+
+**Fase 5 — Observabilidad:** HealthModule, DashboardModule
+
+**Infraestructura (global):** PrismaModule, RedisModule, ConfigModule + ThrottlerModule + BullModule + ClsModule
 
 ---
 
@@ -206,7 +240,7 @@ open http://localhost:3000/docs
 | `NODE_ENV`                 | Entorno de ejecucion                           | `development`               |
 | `PORT`                     | Puerto del servidor                            | `3000`                      |
 | `API_PREFIX`               | Prefijo global de rutas                        | `api/v1`                    |
-| `CORS_ORIGIN`              | Origenes CORS permitidos                       | `http://localhost:3001`     |
+| `CORS_ORIGIN`              | Origenes CORS permitidos (separados por coma)  | `http://localhost:3001`     |
 | `DATABASE_URL`             | Conexion PostgreSQL                            | (requerido)                 |
 | `REDIS_HOST`               | Host de Redis                                  | `localhost`                 |
 | `REDIS_PORT`               | Puerto de Redis                                | `6379`                      |
@@ -214,7 +248,7 @@ open http://localhost:3000/docs
 | `JWT_EXPIRATION`           | Expiracion del access token                    | `15m`                       |
 | `JWT_REFRESH_SECRET`       | Secret para refresh tokens                     | (requerido)                 |
 | `JWT_REFRESH_EXPIRATION`   | Expiracion del refresh token                   | `7d`                        |
-| `ENCRYPTION_KEY`           | Clave AES-256-GCM (64 hex chars)               | (requerido)                 |
+| `ENCRYPTION_KEY`           | Clave AES-256-GCM (64 hex chars = 32 bytes)    | (requerido)                 |
 | `SUNAT_ENV`                | Entorno SUNAT: `beta` o `production`           | `beta`                      |
 | `SUNAT_BETA_RUC`           | RUC de pruebas beta                            | `20000000001`               |
 | `SUNAT_BETA_USER`          | Usuario SOL de pruebas beta                    | `MODDATOS`                  |
@@ -226,6 +260,7 @@ open http://localhost:3000/docs
 | `RESEND_API_KEY`           | API Key de Resend para emails                  | (opcional)                  |
 | `EMAIL_FROM`               | Direccion de remitente                         | `facturas@facturape.com`    |
 | `SENTRY_DSN`               | DSN de Sentry para error tracking              | (opcional)                  |
+| `SENTRY_TRACES_SAMPLE_RATE`| Sample rate para traces de Sentry              | `0.1`                       |
 | `RATE_LIMIT_SHORT_TTL`     | Ventana corta en ms                            | `1000`                      |
 | `RATE_LIMIT_SHORT_LIMIT`   | Limite ventana corta                           | `3`                         |
 | `RATE_LIMIT_MEDIUM_TTL`    | Ventana media en ms                            | `10000`                     |
@@ -245,33 +280,33 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```bash
 # Desarrollo
 pnpm dev                   # Servidor en watch mode (hot reload)
-pnpm build                 # Compilar TypeScript a dist/
+pnpm build                 # Compilar TypeScript a dist/ (nest build)
 pnpm start                 # Ejecutar build compilado
 pnpm start:prod            # Produccion con NODE_ENV=production
 
 # Base de datos
-pnpm db:generate           # Generar Prisma Client
-pnpm db:migrate            # Crear y aplicar migraciones
+pnpm db:generate           # Generar Prisma Client (output: src/generated/prisma/)
+pnpm db:migrate            # Crear y aplicar migraciones (dev)
 pnpm db:migrate:prod       # Aplicar migraciones (produccion, sin generar)
-pnpm db:seed               # Seed de planes de suscripcion
+pnpm db:seed               # Seed de planes de suscripcion (tsx prisma/seed.ts)
 pnpm db:studio             # Prisma Studio (UI visual para BD)
 pnpm db:reset              # Reset completo de BD + migraciones
 
 # Testing
-pnpm test                  # Unit tests con Vitest (~566 tests)
-pnpm test:e2e              # Tests end-to-end
-pnpm test:cov              # Tests con reporte de cobertura
+pnpm test                  # Unit tests con Vitest (~570 tests, 29 spec files)
+pnpm test:e2e              # Tests end-to-end (4 archivos, requiere BD activa)
+pnpm test:cov              # Tests con reporte de cobertura (V8 provider)
 
 # Calidad de codigo
-pnpm lint                  # ESLint
-pnpm format                # Prettier
+pnpm lint                  # ESLint (src/)
+pnpm format                # Prettier (src/)
 ```
 
 ---
 
 ## API Endpoints
 
-Todos los endpoints estan bajo el prefijo `/api/v1/`. Autenticacion requerida salvo indicacion contraria.
+Todos los endpoints estan bajo el prefijo `/api/v1/`. Autenticacion requerida salvo indicacion contraria. Swagger disponible en `/docs` (solo en desarrollo). Todas las operaciones incluyen respuestas globales **401** (Unauthorized), **403** (Forbidden) y **429** (Too Many Requests).
 
 ### Autenticacion
 
@@ -373,7 +408,7 @@ Todos los endpoints estan bajo el prefijo `/api/v1/`. Autenticacion requerida sa
 
 | Metodo | Ruta                                    | Descripcion                     | Auth     |
 |--------|-----------------------------------------|---------------------------------|----------|
-| GET    | `/health`                               | DB, Redis, memoria, disco       | Publica  |
+| GET    | `/health`                               | DB, Redis, memoria (256MB), disco (90%) | Publica  |
 
 ---
 
@@ -381,7 +416,9 @@ Todos los endpoints estan bajo el prefijo `/api/v1/`. Autenticacion requerida sa
 
 FacturaPE soporta 3 flujos de emision segun el tipo de documento:
 
-### Flujo 1: Documentos sincronos (01, 03, 07, 08, 20, 40)
+### Flujo 1: Documentos sincronos via SOAP
+
+**Facturas/Boletas/NC/ND (01, 03, 07, 08)** — Endpoint Invoice:
 
 ```
   POST /invoices/{tipo}
@@ -395,7 +432,7 @@ FacturaPE soporta 3 flujos de emision segun el tipo de documento:
                                                         ▼
   ┌──────────────────┐     ┌───────────────┐     ┌────────────┐
   │ Enviar SOAP      │<────│ Crear ZIP     │<────│ Firmar XML │
-  │ sendBill         │     │ {RUC}-{T}-... │     │ SHA-256+RSA│
+  │ sendBill(invoice)│     │ {RUC}-{T}-... │     │ SHA-256+RSA│
   └────────┬─────────┘     └───────────────┘     └────────────┘
            │
            ▼
@@ -409,6 +446,15 @@ FacturaPE soporta 3 flujos de emision segun el tipo de documento:
   │  PDF  │   │  Email  │   │ Webhooks │
   │  Gen  │   │ c/ XML  │   │ Dispatch │
   └───────┘   └─────────┘   └──────────┘
+```
+
+**Retenciones/Percepciones (20, 40)** — Endpoint Retention (diferente):
+
+```
+  POST /invoices/retencion  o  /percepcion
+         │
+         ▼
+  Validar DTO → Build XML → Firmar → ZIP → sendBill(retention) → CDR
 ```
 
 ### Flujo 2: Resumen Diario / Comunicacion de Baja (RC, RA)
@@ -485,7 +531,7 @@ El sistema utiliza BullMQ con Redis para procesamiento asincrono. 7 colas con co
 
 Tras recibir respuesta de SUNAT, el procesador dispara automaticamente:
 
-1. **Webhook** - Notifica a los endpoints registrados del evento (`invoice.accepted`, `invoice.rejected`)
+1. **Webhook** - Notifica a los endpoints registrados del evento (`invoice.accepted`, `invoice.rejected`, `invoice.observed`)
 2. **PDF** - Genera el PDF A4 y lo almacena
 3. **Email** - Si el cliente tiene email, envia el comprobante con XML adjunto
 
@@ -503,14 +549,33 @@ Para documentos asincronos (RC, RA, GRE), el sistema encola un job `ticket-poll`
 
 | Impuesto | Tasa | Catalogo | Notas |
 |----------|------|----------|-------|
-| IGV | 18% | Cat 05 (1000) | Tasa general |
+| IGV | 18% | Cat 05 (1000) | Tasa general, etiqueta dinamica en PDFs |
 | IGV Restaurantes MYPEs | 10.5% | Cat 05 (1000) | Ley 32357, vigente desde ene 2026 |
 | IVAP (Arroz Pilado) | 4% | Cat 05 (1016) | Tipo afectacion 17 |
 | ISC | Variable | Cat 05 (2000) | Por tipo de producto |
 | ICBPER (Bolsas Plasticas) | S/ 0.50 | Cat 05 (7152) | Por unidad |
 | Retenciones | 3% / 6% | Cat 23 | Regimen 01 / 02 |
 | Percepciones | 0.5% / 1% / 2% | Cat 22 | Regimen 03 / 02 / 01 |
-| Detracciones (SPOT) | Variable por codigo | Cat 54 | Umbral S/ 700, Cat 54 Anexo I/II/III |
+| Detracciones (SPOT) | Variable por codigo | Cat 54 | Umbral S/ 700, Anexo I/II/III, ~39 codigos |
+
+### Detracciones (Catalogo 54)
+
+El sistema implementa ~39 codigos de detraccion organizados por Anexo:
+
+- **Anexo I — Bienes gravados**: Azucar (001), Alcohol (003), Recursos hidrobiologicos (004), Maiz amarillo (005), Arroz pilado (008), Madera (009), Arena/piedra (010), etc.
+- **Anexo II — Bienes intermedios**: Intermediacion laboral (012), Aceite/Harina de pescado (015-017), Abonos (019), Algodón (021), Minerales (023-025, 034-036, 041), etc.
+- **Anexo III — Servicios**: Arrendamiento (020), Movimiento de carga (021), Servicios empresariales (022), Comision mercantil (024), Transporte (026-027), Construccion (030), etc.
+
+Constantes clave: `DETRACCION_DEFAULT_RATE = 0.12`, `DETRACCION_THRESHOLD = S/ 700`, `DETRACCION_THRESHOLD_TRANSPORT = S/ 400`.
+
+### Generacion dinamica de PDFs
+
+Los PDFs (A4 y ticket 80mm) muestran la tasa de IGV dinamicamente:
+- IGV 18% (tasa general)
+- IGV 10.5% (MYPEs restaurantes)
+- IVAP 4% (Arroz Pilado, tipo afectacion 17)
+
+Adicionalmente muestran: operaciones gratuitas, exportacion, IVAP, igvIvap, detracciones con porcentaje y monto.
 
 ---
 
@@ -552,9 +617,17 @@ Tres tiers configurables via variables de entorno:
 
 ### Headers y CORS
 
-- Helmet con CSP environment-aware via `@fastify/helmet`
-- CORS configurable via `CORS_ORIGIN` (default: `localhost:3001`)
-- Correlation ID (`X-Request-ID`) generado y propagado en todas las respuestas
+- Helmet con CSP environment-aware via `@fastify/helmet` (strict en prod, relajado para Swagger en dev)
+- CORS configurable via `CORS_ORIGIN` (soporta multiples origenes separados por coma)
+- Correlation ID (`X-Request-ID`) generado y propagado en todas las respuestas via CorrelationIdMiddleware
+
+### Global Exception Filters
+
+Tres filtros globales en orden de prioridad:
+
+1. **PrismaExceptionFilter** — Captura errores Prisma (unique constraint, not found, etc.)
+2. **HttpExceptionFilter** — Estandariza respuestas HTTP de error
+3. **SentryExceptionFilter** — Reporta excepciones no manejadas a Sentry
 
 ---
 
@@ -571,21 +644,27 @@ pnpm test:cov
 pnpm test:e2e
 ```
 
-### Suites de test (~566 tests, 28 spec files + 4 e2e files)
+### Suites de test (~570 tests, 29 spec files + 4 e2e files)
 
-**Utilidades (common/utils/):**
+**Utilidades (common/utils/) — 12 archivos:**
 
 | Suite | Descripcion |
 |-------|-------------|
 | `tax-calculator.spec.ts` | Calculo IGV/ISC/ICBPER/IVAP, totales |
-| `tax-calculator-*.spec.ts` (7 archivos) | Detracciones, exportaciones, gratuitas, ISC, IVAP, MYPEs |
+| `tax-calculator-detraccion.spec.ts` | Detracciones SPOT (Cat 54) |
+| `tax-calculator-export.spec.ts` | Operaciones de exportacion |
+| `tax-calculator-gratuitas.spec.ts` | Operaciones gratuitas (retiros, bonificaciones) |
+| `tax-calculator-isc.spec.ts` | Impuesto Selectivo al Consumo |
+| `tax-calculator-ivap.spec.ts` | IVAP Arroz Pilado 4% |
+| `tax-calculator-mype.spec.ts` | IGV 10.5% MYPEs restaurantes |
+| `tax-calculator-rounding.spec.ts` | Redondeo y tolerancias SUNAT |
 | `amount-to-words.spec.ts` | Montos en letras (espanol) |
 | `encryption.spec.ts` | AES-256-GCM encrypt/decrypt |
 | `ruc-validator.spec.ts` | Validacion modulo 11 RUC |
 | `zip.spec.ts` | Utilidades ZIP |
 | `peru-date.spec.ts` | Fechas zona horaria Peru (UTC-5) |
 
-**Builders XML:**
+**Builders XML — 6 archivos:**
 
 | Suite | Descripcion |
 |-------|-------------|
@@ -594,8 +673,9 @@ pnpm test:e2e
 | `invoice-builder-features.spec.ts` | Features avanzados (IVAP, detracciones, anticipos) |
 | `retention-perception.spec.ts` | Builders retencion y percepcion |
 | `guide.spec.ts` | Builder guia de remision |
+| `sunat-beta-integration.spec.ts` | Integracion contra SUNAT beta |
 
-**Validadores XML:**
+**Validadores XML — 5 archivos:**
 
 | Suite | Descripcion |
 |-------|-------------|
@@ -605,7 +685,7 @@ pnpm test:e2e
 | `xml-validator-deep.spec.ts` | Validacion profunda |
 | `xml-validator-retention-perception.spec.ts` | Validacion CRE/CPE |
 
-**Servicios:**
+**Servicios — 6 archivos:**
 
 | Suite | Descripcion |
 |-------|-------------|
@@ -616,7 +696,7 @@ pnpm test:e2e
 | `pdf-generator.service.spec.ts` | Generacion PDF A4/ticket |
 | `invoice-send.spec.ts` | Processor de cola invoice-send |
 
-**E2E (test/):**
+**E2E (test/) — 4 archivos:**
 
 | Suite | Descripcion |
 |-------|-------------|
@@ -643,6 +723,8 @@ pnpm test:e2e
 docker compose up -d postgres redis
 ```
 
+Contenedores: `facturape-db` (PostgreSQL 16), `facturape-redis` (Redis 7).
+
 ### Produccion
 
 ```bash
@@ -653,11 +735,13 @@ docker compose up -d
 docker build -t facturape-backend .
 ```
 
+Contenedor de aplicacion: `facturape-app`.
+
 ### Imagen de produccion
 
 La imagen Docker utiliza un build multi-stage optimizado:
 
-1. **deps** - Instala dependencias con pnpm (frozen lockfile)
+1. **deps** - Instala dependencias con pnpm (frozen lockfile, corepack)
 2. **build** - Compila TypeScript, genera Prisma Client, prune dev deps
 3. **production** - Imagen minima Alpine con solo runtime
    - Base: `node:22-alpine`
@@ -696,6 +780,8 @@ El pipeline de GitHub Actions (`.github/workflows/ci.yml`) ejecuta 4 jobs:
 | **Business** | S/ 299     | 2,000        | 10       | + WhatsApp, soporte prioritario      |
 | **Enterprise**| S/ 599    | Ilimitado    | Ilimitado| + SLA, soporte dedicado              |
 
+Seed ejecutado con `pnpm db:seed` (4 planes preconfigurados).
+
 ---
 
 ## Estructura del Proyecto
@@ -703,11 +789,11 @@ El pipeline de GitHub Actions (`.github/workflows/ci.yml`) ejecuta 4 jobs:
 ```
 src/
 ├── main.ts                           # Bootstrap Fastify + Sentry + graceful shutdown
-├── app.module.ts                     # Root module (guards, filters, interceptors, middleware)
-├── generated/prisma/                 # Prisma Client generado (output local)
+├── app.module.ts                     # Root module (5 guards, 3 filters, 2 interceptors, 1 middleware)
+├── generated/prisma/                 # Prisma Client generado (output local, NO node_modules)
 ├── common/
 │   ├── constants/index.ts            # Catalogos SUNAT 01-62, namespaces UBL,
-│   │                                 # endpoints SOAP/GRE, tasas, detracciones, IVAP
+│   │                                 # endpoints SOAP/GRE, tasas, ~39 detracciones, IVAP
 │   ├── decorators/                   # @CurrentUser, @Tenant, @Public, @SkipTenant, @Roles, @ApiKeyAuth
 │   ├── guards/                       # JWT, API Key, Tenant, Roles, TenantThrottler
 │   ├── interceptors/                 # Logging, Timeout
@@ -716,14 +802,14 @@ src/
 │   ├── middleware/                    # TenantMiddleware (CLS), CorrelationIdMiddleware (X-Request-ID)
 │   └── utils/                        # tax-calculator, amount-to-words, encryption,
 │                                     # peru-date, zip, ruc-validator
-├── config/                           # app, database, redis, sunat, jwt, mercadopago,
-│                                     # resend, sentry
+├── config/                           # 8 archivos: app, database, redis, sunat, jwt,
+│                                     # mercadopago, resend, sentry
 ├── modules/
 │   ├── auth/                         # JWT + API Keys + register/login/refresh/logout/password
 │   ├── users/                        # Perfil usuario (GET/PUT /me, GET /me/companies)
 │   ├── companies/                    # Empresas (tenants) + SOL + migracion beta/prod
 │   ├── certificates/                 # Upload PFX, cifrado AES-256-GCM
-│   ├── xml-builder/                  # 8 builders XML UBL 2.1 + validador + interfaces
+│   ├── xml-builder/                  # 9 builders XML UBL 2.1 + validador + interfaces
 │   │   ├── builders/                 # base, invoice, credit-note, debit-note, summary,
 │   │   │                             # voided, retention, perception, guide
 │   │   ├── validators/               # 8 metodos validate* (pre-envio SUNAT)
@@ -735,7 +821,7 @@ src/
 │   │   └── wsdl/                     # WSDLs locales: main.wsdl, retention.wsdl, types.*
 │   ├── cdr-processor/                # Parseo CDR (ApplicationResponse)
 │   ├── invoices/                     # 9 tipos CPE + batch: controller + service + 11 DTOs
-│   ├── pdf-generator/                # PDF A4 + ticket 80mm (pdfmake + QR)
+│   ├── pdf-generator/                # PDF A4 + ticket 80mm (pdfmake + QR, IGV dinamico)
 │   ├── queues/                       # 7 colas BullMQ + DLQ listener
 │   │   └── processors/               # invoice-send, summary-send, ticket-poll,
 │   │                                 # pdf-generate, email-send, webhook-send, dlq.listener
@@ -744,15 +830,20 @@ src/
 │   ├── billing/                      # Planes + suscripciones + Mercado Pago (/billing/*)
 │   ├── notifications/                # Emails transaccionales (Resend)
 │   ├── dashboard/                    # Resumen emision + reporte mensual PDT 621
-│   ├── health/                       # Health checks (Terminus: DB, Redis, memory, disk)
+│   ├── health/                       # Health checks (Terminus: DB, Redis, memory 256MB, disk 90%)
 │   ├── prisma/                       # PrismaService global con tenant extension
 │   └── redis/                        # RedisModule global (ioredis, token REDIS_CLIENT)
 ├── database/
 │   └── rls-policies.sql              # Politicas Row-Level Security
 └── prisma/
-    ├── schema.prisma                 # Schema con IVAP, detracciones, anticipos, exportacion
-    ├── seed.ts                       # Seed planes de suscripcion
-    └── migrations/                   # 2 migraciones (init + webhooks)
+    ├── schema.prisma                 # 13 modelos + InvoiceStatus enum
+    ├── prisma.config.ts              # defineConfig con earlyAccess + PrismaPg adapter
+    ├── seed.ts                       # Seed planes de suscripcion (4 planes)
+    └── migrations/                   # 4 migraciones
+        ├── 20260222204548_init/                          # Schema base
+        ├── 20260222224827_add_webhook_model/              # Tabla webhooks
+        ├── 20260224180000_invoice_status_enum/            # InvoiceStatus enum PG
+        └── 20260225100000_add_ivap_detraccion_columns/   # IVAP + detracciones + series
 ```
 
 ---
