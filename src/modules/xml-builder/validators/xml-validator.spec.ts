@@ -308,8 +308,8 @@ describe('XmlValidatorService — Nota Débito (08)', () => {
     expect(errors.some((e: any) => e.field === 'motivoNota')).toBe(true);
   });
 
-  it('accepts all valid debit motivo codes (01, 02, 03, 11)', () => {
-    for (const code of ['01', '02', '03', '11']) {
+  it('accepts all valid debit motivo codes (01, 02, 03, 10)', () => {
+    for (const code of ['01', '02', '03', '10']) {
       expect(() =>
         validator.validateDebitNote(makeDebitNoteDto({ motivoNota: code })),
       ).not.toThrow();

@@ -115,6 +115,10 @@ jobs:
       - name: Run unit & integration tests
         run: pnpm test -- --run --reporter=verbose
 
+      - name: Run E2E tests
+        run: pnpm test:e2e -- --run --reporter=verbose
+        continue-on-error: true
+
       - name: Run tests with coverage
         run: pnpm test -- --run --coverage
         continue-on-error: true

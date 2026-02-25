@@ -7,24 +7,9 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import { PdfGeneratorService } from '../../pdf-generator/pdf-generator.service.js';
 import type { PdfInvoiceData, PdfInvoiceItem } from '../../pdf-generator/interfaces/pdf-data.interface.js';
 import { amountToWords } from '../../../common/utils/amount-to-words.js';
+import { TIPO_DOC_NOMBRES, CURRENCY_SYMBOLS } from '../../../common/constants/index.js';
 import { QUEUE_PDF_GENERATE } from '../queues.constants.js';
 import type { PdfGenerateJobData } from '../interfaces/index.js';
-
-const TIPO_DOC_NOMBRES: Record<string, string> = {
-  '01': 'FACTURA ELECTRÓNICA',
-  '03': 'BOLETA DE VENTA ELECTRÓNICA',
-  '07': 'NOTA DE CRÉDITO ELECTRÓNICA',
-  '08': 'NOTA DE DÉBITO ELECTRÓNICA',
-  '09': 'GUÍA DE REMISIÓN ELECTRÓNICA',
-  '20': 'COMPROBANTE DE RETENCIÓN ELECTRÓNICA',
-  '40': 'COMPROBANTE DE PERCEPCIÓN ELECTRÓNICA',
-};
-
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  PEN: 'S/',
-  USD: 'US$',
-  EUR: '€',
-};
 
 @Processor(QUEUE_PDF_GENERATE, {
   concurrency: 5,
@@ -130,7 +115,7 @@ export class PdfGenerateProcessor extends WorkerHost {
       sunatMessage: invoice.sunatMessage ?? undefined,
       formaPago: invoice.formaPago,
       motivoNota: invoice.motivoNota ?? undefined,
-      motivoDescripcion: invoice.motivoNota ?? undefined,
+      motivoDescripcion: invoice.motivoDescripcion ?? invoice.motivoNota ?? undefined,
       docRefSerie: invoice.docRefSerie ?? undefined,
       docRefCorrelativo: invoice.docRefCorrelativo ?? undefined,
     };

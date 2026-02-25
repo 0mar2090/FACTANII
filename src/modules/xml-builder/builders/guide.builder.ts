@@ -225,11 +225,9 @@ export class GuideBuilder extends BaseXmlBuilder {
     }
 
     // Special authorization (hazardous goods, etc.)
+    // Uses cbc:SpecialInstructions (simple text element per UBL 2.1)
     if (data.autorizacionEspecial) {
-      shipment
-        .ele('cac:SpecialInstructions')
-          .ele('cbc:ID').txt(data.autorizacionEspecial).up()
-        .up();
+      shipment.ele('cbc:SpecialInstructions').txt(data.autorizacionEspecial).up();
     }
 
     // Transport handling unit (vehicle)

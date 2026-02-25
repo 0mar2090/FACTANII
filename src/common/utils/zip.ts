@@ -89,11 +89,15 @@ export function extractXmlFromZip(zipBuffer: Buffer): string | null {
 /**
  * Build the standard SUNAT file name (without extension) from document identifiers.
  *
- * @param ruc         - Company RUC (11 digits)
+ * Validates that the RUC starts with '1' or '2' per SUNAT ERR-0151
+ * (active since Feb 2026).
+ *
+ * @param ruc         - Company RUC (11 digits, must start with 1 or 2)
  * @param tipoDoc     - Document type code (e.g., "01" for factura)
  * @param serie       - Series (e.g., "F001")
  * @param correlativo - Sequential number
  * @returns Base name like "20000000001-01-F001-1"
+ * @throws Error if RUC does not start with 1 or 2
  *
  * @example
  * ```ts
@@ -109,5 +113,9 @@ export function buildSunatFileName(
   serie: string,
   correlativo: number,
 ): string {
+  // ERR-0151: RUC in ZIP filename must start with digit 1 or 2
+  if (ruc && !/^[12]/.test(ruc)) {
+    throw new Error(`ERR-0151: RUC in ZIP filename must start with 1 or 2, got: ${ruc}`);
+  }
   return `${ruc}-${tipoDoc}-${serie}-${correlativo}`;
 }

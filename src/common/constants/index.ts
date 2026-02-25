@@ -103,7 +103,7 @@ export const MOTIVO_NOTA_DEBITO = {
   INTERESES_POR_MORA: '01',
   AUMENTO_VALOR: '02',
   PENALIDADES: '03',
-  OTROS: '11',
+  OTROS: '10',
 } as const;
 
 /** Catálogo 16: Código de tipo de precio de venta */
@@ -177,6 +177,10 @@ export const CODIGO_DETRACCION = {
   ORO_MINERALES_EXONERADOS_IGV: '036',
   ORO_GRAVADO_IGV: '039',
   PLOMO: '041',
+  // Minerales — Res. 000086-2025/SUNAT y 000121-2025/SUNAT (abril 2025)
+  MINERALES_ORO_CONCENTRADOS: '044',
+  MINERALES_NO_AURIFEROS_CONCENTRADOS: '045',
+  SERVICIOS_BENEFICIO_MINERALES: '046',
   // Servicios sujetos a detracción (Anexo 3)
   INTERMEDIACION_LABORAL: '014',
   ARRENDAMIENTO_BIENES_MUEBLES: '020',
@@ -255,6 +259,10 @@ export const DETRACCION_RATES: Record<string, number> = {
   '036': 0.015, // Oro y demás minerales metalicos exonerados del IGV
   '039': 0.10,  // Minerales no metálicos
   '041': 0.15,  // Plomo
+  // Minerales — Res. 000086-2025/SUNAT (abril 2025)
+  '044': 0.10,  // Oro y concentrados de minerales auríferos (trasladado Anexo 1)
+  '045': 0.10,  // Minerales metálicos no auríferos y sus concentrados (trasladado Anexo 1)
+  '046': 0.12,  // Servicio de beneficio de minerales (Anexo 3)
   // Anexo III — Servicios
   '012': 0.12,  // Intermediación laboral y tercerización
   '019': 0.10,  // Arrendamiento de bienes
@@ -278,8 +286,12 @@ export const DETRACCION_THRESHOLD_TRANSPORT = 400;
 /** Fracción UIT para umbral Anexo 1 (½ UIT) */
 export const DETRACCION_THRESHOLD_ANNEX1_UIT_FRACTION = 0.5;
 
-/** Tasa IGV reducida para MYPE restaurantes y hoteles (Ley 32357, desde 01/01/2026) */
-export const IGV_RESTAURANT_RATE = 0.105;
+/** Tasa IGV reducida para MYPE restaurantes, hoteles y alojamientos turísticos
+ *  Ley 31556, vigente 2025-2026: 8% IGV + 2% IPM = 10% total
+ *  2027: 12% IGV + 2% IPM = 14% total
+ *  2028+: 16% IGV + 2% IPM = 18% (estándar)
+ */
+export const IGV_RESTAURANT_RATE = 0.10;
 
 // ═══════════════════════════════════════
 // Constantes de negocio SUNAT
@@ -343,7 +355,8 @@ export const MOTIVO_TRASLADO = {
   EXPORTACION: '14',
   VENTA_SUJETA_DESTINATARIO_NO_CONFIRMADO: '17',
   TRASLADO_A_ZONA_PRIMARIA: '18',
-  OTROS: '19',
+  /** Traslado de Mercancía Extranjera — Res. 000133-2025/SUNAT, obligatorio julio 2026 */
+  TRASLADO_MERCANCIA_EXTRANJERA: '19',
 } as const;
 
 /** Catálogo 22: Régimen de percepción */

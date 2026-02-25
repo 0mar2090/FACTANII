@@ -226,15 +226,15 @@ describe('XmlValidatorService — Debit Note motivo validation', () => {
     expect(errors.some((e: any) => e.field === 'motivoNota')).toBe(true);
   });
 
-  it('rejects invalid motivo code 10', () => {
+  it('rejects invalid motivo code 11', () => {
     const errors = getErrors(() =>
-      validator.validateDebitNote(makeDebitNoteDto({ motivoNota: '10' })),
+      validator.validateDebitNote(makeDebitNoteDto({ motivoNota: '11' })),
     );
     expect(errors.some((e: any) => e.field === 'motivoNota')).toBe(true);
   });
 
-  it('accepts valid debit motivo codes (01, 02, 03, 11)', () => {
-    for (const code of ['01', '02', '03', '11']) {
+  it('accepts valid debit motivo codes (01, 02, 03, 10)', () => {
+    for (const code of ['01', '02', '03', '10']) {
       const errors = getErrors(() =>
         validator.validateDebitNote(makeDebitNoteDto({ motivoNota: code })),
       );

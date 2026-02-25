@@ -155,6 +155,9 @@ export class SummaryBuilder extends BaseXmlBuilder {
     if (item.opInafectas > 0) {
       this.addBillingPayment(line, item.opInafectas, item.moneda, '03');
     }
+    if (item.opExportacion && item.opExportacion > 0) {
+      this.addBillingPayment(line, item.opExportacion, item.moneda, '04');
+    }
     if (item.opGratuitas > 0) {
       this.addBillingPayment(line, item.opGratuitas, item.moneda, '05');
     }
@@ -203,6 +206,11 @@ export class SummaryBuilder extends BaseXmlBuilder {
     // Inafecto subtotal
     if (item.opInafectas > 0) {
       this.addSummaryTaxSubtotal(taxTotal, 0, item.opInafectas, item.moneda, CODIGO_TRIBUTO.INAFECTO);
+    }
+
+    // Exportación subtotal
+    if (item.opExportacion && item.opExportacion > 0) {
+      this.addSummaryTaxSubtotal(taxTotal, 0, item.opExportacion, item.moneda, CODIGO_TRIBUTO.EXPORTACION);
     }
 
     // Gratuito subtotal

@@ -208,6 +208,8 @@ export interface XmlSummaryLine {
   opExoneradas: number;
   opInafectas: number;
   opGratuitas: number;
+  /** Export operations (tipoAfectacion '40') — BillingPayment instructionID '04' */
+  opExportacion?: number;
   otrosCargos: number;
   igv: number;
   isc: number;

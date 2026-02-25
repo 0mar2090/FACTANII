@@ -219,7 +219,7 @@ export class PerceptionBuilder extends BaseXmlBuilder {
     perInfo
       .ele('sac:SUNATNetTotalCashed')
         .att('currencyID', moneda)
-        .txt(this.formatAmount(item.importeCobrado))
+        .txt(this.formatAmount(item.importeCobrado - item.importePercibido))
       .up();
 
     // Exchange rate if foreign currency

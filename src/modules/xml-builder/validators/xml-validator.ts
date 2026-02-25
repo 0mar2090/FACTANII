@@ -21,6 +21,14 @@ import {
   DETRACCION_THRESHOLD,
   DETRACCION_THRESHOLD_TRANSPORT,
 } from '../../../common/constants/index.js';
+
+/** Type-safe includes check for const object values */
+function includesValue<T extends Record<string, string>>(
+  obj: T,
+  value: string,
+): value is T[keyof T] {
+  return (Object.values(obj) as string[]).includes(value);
+}
 import { round2, calculateItemTaxes, calculateInvoiceTotals } from '../../../common/utils/tax-calculator.js';
 import { peruToday, daysBetweenInPeru } from '../../../common/utils/peru-date.js';
 import type { CreateInvoiceDto } from '../../invoices/dto/create-invoice.dto.js';
@@ -89,7 +97,7 @@ export class XmlValidatorService {
         TIPO_DOC_IDENTIDAD.PASAPORTE,
         TIPO_DOC_IDENTIDAD.OTROS,
       ];
-      if (!validBoletaDocTypes.includes(dto.clienteTipoDoc as any)) {
+      if (!(validBoletaDocTypes as readonly string[]).includes(dto.clienteTipoDoc)) {
         errors.push({
           field: 'clienteTipoDoc',
           message: 'Boleta cannot use RUC as client document type',
@@ -117,7 +125,7 @@ export class XmlValidatorService {
 
       if (estimatedTotal > 700) {
         const anonymousDocTypes = [TIPO_DOC_IDENTIDAD.OTROS, TIPO_DOC_IDENTIDAD.NO_DOMICILIADO];
-        const isAnonymous = anonymousDocTypes.includes(dto.clienteTipoDoc as any)
+        const isAnonymous = (anonymousDocTypes as readonly string[]).includes(dto.clienteTipoDoc)
           || !dto.clienteNumDoc || dto.clienteNumDoc.trim() === '';
 
         if (isAnonymous) {
@@ -180,7 +188,7 @@ export class XmlValidatorService {
     // Validate detracción code against catalog 54
     if (dto.codigoDetraccion) {
       const validCodes = Object.values(CODIGO_DETRACCION);
-      if (!validCodes.includes(dto.codigoDetraccion as any)) {
+      if (!includesValue(CODIGO_DETRACCION, dto.codigoDetraccion)) {
         errors.push({
           field: 'codigoDetraccion',
           message: `Invalid detracción code. Must be a valid SUNAT catalog 54 code`,
@@ -283,7 +291,7 @@ export class XmlValidatorService {
 
     // Validate motivo nota
     const validMotivos = Object.values(MOTIVO_NOTA_CREDITO);
-    if (!validMotivos.includes(dto.motivoNota as any)) {
+    if (!includesValue(MOTIVO_NOTA_CREDITO, dto.motivoNota)) {
       errors.push({
         field: 'motivoNota',
         message: `Invalid credit note reason code. Valid codes: ${validMotivos.join(', ')}`,
@@ -354,7 +362,7 @@ export class XmlValidatorService {
 
     // Validate motivo nota
     const validMotivos = Object.values(MOTIVO_NOTA_DEBITO);
-    if (!validMotivos.includes(dto.motivoNota as any)) {
+    if (!includesValue(MOTIVO_NOTA_DEBITO, dto.motivoNota)) {
       errors.push({
         field: 'motivoNota',
         message: `Invalid debit note reason code. Valid codes: ${validMotivos.join(', ')}`,
@@ -409,7 +417,7 @@ export class XmlValidatorService {
 
     // Validate regime
     const validRegimes = Object.values(REGIMEN_RETENCION);
-    if (!validRegimes.includes(dto.regimenRetencion as any)) {
+    if (!includesValue(REGIMEN_RETENCION, dto.regimenRetencion)) {
       errors.push({
         field: 'regimenRetencion',
         message: `Invalid retention regime. Valid codes: ${validRegimes.join(', ')}`,
@@ -502,7 +510,7 @@ export class XmlValidatorService {
 
     // Validate regime
     const validRegimes = Object.values(REGIMEN_PERCEPCION);
-    if (!validRegimes.includes(dto.regimenPercepcion as any)) {
+    if (!includesValue(REGIMEN_PERCEPCION, dto.regimenPercepcion)) {
       errors.push({
         field: 'regimenPercepcion',
         message: `Invalid perception regime. Valid codes: ${validRegimes.join(', ')}`,
@@ -588,7 +596,7 @@ export class XmlValidatorService {
 
     // Validate motivo de traslado
     const validMotivos = Object.values(MOTIVO_TRASLADO);
-    if (!validMotivos.includes(dto.motivoTraslado as any)) {
+    if (!includesValue(MOTIVO_TRASLADO, dto.motivoTraslado)) {
       errors.push({
         field: 'motivoTraslado',
         message: `Invalid transfer reason. Valid codes: ${validMotivos.join(', ')}`,
@@ -605,7 +613,7 @@ export class XmlValidatorService {
 
     // Validate modalidad de transporte
     const validModalidades = Object.values(MODALIDAD_TRANSPORTE);
-    if (!validModalidades.includes(dto.modalidadTransporte as any)) {
+    if (!includesValue(MODALIDAD_TRANSPORTE, dto.modalidadTransporte)) {
       errors.push({
         field: 'modalidadTransporte',
         message: `Invalid transport mode. Valid codes: ${validModalidades.join(', ')}`,
@@ -909,7 +917,7 @@ export class XmlValidatorService {
    */
   private validateCurrency(moneda: string, errors: ValidationError[]): void {
     const validCurrencies = Object.values(TIPO_MONEDA);
-    if (!validCurrencies.includes(moneda as any)) {
+    if (!includesValue(TIPO_MONEDA, moneda)) {
       errors.push({
         field: 'moneda',
         message: `Invalid currency. Valid codes: ${validCurrencies.join(', ')}`,
@@ -959,7 +967,7 @@ export class XmlValidatorService {
       // Validate tipoAfectacion if provided
       if (item.tipoAfectacion) {
         const validAfectaciones = Object.values(TIPO_AFECTACION_IGV);
-        if (!validAfectaciones.includes(item.tipoAfectacion as any)) {
+        if (!includesValue(TIPO_AFECTACION_IGV, item.tipoAfectacion)) {
           errors.push({
             field: `items[${i}].tipoAfectacion`,
             message: `Invalid IGV affectation type: ${item.tipoAfectacion}`,
