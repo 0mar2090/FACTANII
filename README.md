@@ -885,6 +885,4 @@ test/
 
 ---
 
-## Licencia
-
-Proyecto propietario. Todos los derechos reservados.
+## Licencia AGPL-3.0-only 
