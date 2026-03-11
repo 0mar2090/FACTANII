@@ -1,6 +1,7 @@
 {
   "name": "facturape-backend",
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "description": "Backend SaaS de facturación electrónica SUNAT - NestJS + Fastify + Prisma 7",
   "type": "module",
   "engines": {
